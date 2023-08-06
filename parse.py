@@ -162,21 +162,7 @@ class ParseResult:
 
     def __getitem__(self, idx: int) -> str | None:
         """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it."""
-        match idx:
-            case 0:
-                return self.scheme if self.scheme else ""
-            case 1:
-                return self.netloc if self.netloc else ""
-            case 2:
-                return self.path if self.path else ""
-            case 3:
-                return self.params if self.params else ""
-            case 4:
-                return self.query if self.query else ""
-            case 5:
-                return self.fragment if self.fragment else ""
-            case _:
-                raise IndexError("index out of range")
+        return list(self)[idx]
 
     def __iter__(self) -> Iterator[str]:
         """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it."""
@@ -311,19 +297,7 @@ def urlparse(url: str, scheme: str | None = None) -> ParseResult:
 class SplitResult(ParseResult):
     def __getitem__(self, idx: int) -> str | None:
         """urllib compatibility function. The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
-        match idx:
-            case 0:
-                return self.scheme if self.scheme else ""
-            case 1:
-                return self.netloc if self.netloc else ""
-            case 2:
-                return self.path if self.path else ""
-            case 3:
-                return self.query if self.query else ""
-            case 4:
-                return self.fragment if self.fragment else ""
-            case _:
-                raise IndexError("index out of range")
+        return list(self)[idx]
 
     def __iter__(self) -> Iterator[str]:
         """urllib compatibility function. The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
