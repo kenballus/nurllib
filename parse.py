@@ -160,11 +160,13 @@ class ParseResult:
     query: str | None
     fragment: str | None
 
-    def __init__(self, scheme: str | None, userinfo: str | None, host: str | None, port: int | None, path: str, query: str | None, fragment: str | None):
+    def __init__(self, scheme: str | None, userinfo: str | None, host: str | None, port: str | None, path: str, query: str | None, fragment: str | None):
         self.scheme = scheme.lower()
         self.userinfo = _capitalize_percent_encodings(userinfo)
         self.host = _capitalize_percent_encodings(host.lower())
-        self.port = port
+        self.port = int(port)
+        if self.port > 65535:
+            raise ValueError("port number out of range")
         self.path = _capitalize_percent_encodings(path)
         self.query = _capitalize_percent_encodings(query)
         self.fragment = _capitalize_percent_encodings(fragment)
@@ -262,60 +264,24 @@ def urlparse(url: str, scheme: str | None = None) -> ParseResult:
     if scheme is not None and re.match(rf"\A{_SCHEME}\Z", scheme) is None:
         raise ValueError("invalid scheme")
 
-    if uri_match := re.match(_URI, url):
-        uri_scheme: str = uri_match["scheme"]
-        uri_userinfo: str | None = uri_match["userinfo"]
-        uri_host: str | None = uri_match["host"]
-        uri_port_str: str | None = uri_match["port"]
-        uri_port: int | None = int(uri_port_str) if uri_port_str else None
-        if uri_port > 65535:
-            raise ValueError("port out of range")
-        uri_path: str = (
-            uri_match["path_abempty"]
-            or uri_match["path_absolute"]
-            or uri_match["path_rootless"]
-            or uri_match["path_empty"]
-        )
-        uri_query: str | None = uri_match["query"]
-        uri_fragment: str | None = uri_match["fragment"]
+    path_kinds: list[str] = ["path_abempty", "path_absolute", "path_empty"]
+    if m := re.match(_URI, url):
+        path_kinds.append("path_rootless")
+        scheme = m["scheme"]
+    elif m := re.match(_RELATIVE_REF, url):
+        path_kinds.append("path_noscheme")
+    else:
+        raise ValueError("failed to parse URL.")
+    return ParseResult(
+        scheme=scheme,
+        userinfo=m["userinfo"],
+        host=m["host"],
+        port=m["port"],
+        path=next(filter(lambda path_kind: m[path_kind] is not None, path_kinds)),
+        query=m["query"],
+        fragment=m["fragment"],
+    )
 
-        return ParseResult(
-            scheme=uri_scheme,
-            userinfo=uri_userinfo,
-            host=uri_host,
-            port=uri_port,
-            path=uri_path,
-            query=uri_query,
-            fragment=uri_fragment,
-        )
-
-    if rr_match := re.match(_RELATIVE_REF, url):
-        rr_userinfo: str | None = rr_match["userinfo"]
-        rr_host: str | None = rr_match["host"]
-        rr_port_str: str | None = rr_match["port"]
-        rr_port: int | None = int(rr_port_str) if rr_port_str else None
-        if rr_port > 65535:
-            raise ValueError("port out of range")
-        rr_path: str = (
-            rr_match["path_abempty"]
-            or rr_match["path_absolute"]
-            or rr_match["path_noscheme"]
-            or rr_match["path_empty"]
-        )
-        rr_query: str | None = rr_match["query"]
-        rr_fragment: str | None = rr_match["fragment"]
-
-        return ParseResult(
-            scheme=scheme,
-            userinfo=rr_userinfo,
-            host=rr_host,
-            port=rr_port,
-            path=rr_path,
-            query=rr_query,
-            fragment=rr_fragment,
-        )
-
-    raise ValueError("failed to parse URL.")
 
 
 class SplitResult(ParseResult):
