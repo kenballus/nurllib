@@ -4,18 +4,18 @@ I am shooting for RFC 3986 compatibility.
 
 To do:
     - Add support for bytes (ParseResultBytes, ParseResult.encode)
-    - Add urlunsplit
-    - Decide whether it's worth it to implement __setitem__
+    - Add urljoin, parse_qs, parse_qsl, urldefrag?
+    - Rename ParseResult to URL?
+    - Implement __setitem__?
     - Support RFC 3987?
     - Support RFC 6874??
-    - Combine _URI and _RELATIVE_REF? (will require renaming the capture groups)
-    - Make a function that turns a URL's path into a pathlib.Path?
 """
 
 import dataclasses
 import re
 from typing import Iterator
-from urllib.parse import quote, unquote  # I have less of a problem with these functions
+# I have less of a problem with these functions, so I'm cool importing them from urllib:
+from urllib.parse import quote, quote_from_bytes, quote_plus, quote_from_bytes, unquote, unquote_plus, unquote_to_bytes, urlencode, unwrap
 
 # Each of these ABNF rules is from RFC 3986 or 5234.
 
@@ -161,18 +161,13 @@ class ParseResult:
     fragment: str | None
 
     def __init__(self, scheme: str | None, userinfo: str | None, host: str | None, port: str | None, path: str, query: str | None, fragment: str | None):
-        self.scheme = scheme.lower()
-        self.userinfo = _capitalize_percent_encodings(userinfo)
-        self.host = _capitalize_percent_encodings(host.lower())
-        if port:
-            self.port = int(port)
-            if self.port > 65535:
-                raise ValueError("port number out of range")
-        else:
-            port = None
-        self.path = _capitalize_percent_encodings(path)
-        self.query = _capitalize_percent_encodings(query)
-        self.fragment = _capitalize_percent_encodings(fragment)
+        self.scheme = scheme.lower() if scheme else None
+        self.userinfo = _capitalize_percent_encodings(userinfo) if userinfo else None
+        self.host = _capitalize_percent_encodings(host.lower()) if host else None
+        self.port = int(port) if port else None
+        self.path = _capitalize_percent_encodings(path) if path else None
+        self.query = _capitalize_percent_encodings(query) if query else None
+        self.fragment = _capitalize_percent_encodings(fragment) if fragment else None
 
     def __getitem__(self, idx: int) -> str | None:
         """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it."""
@@ -286,6 +281,9 @@ def urlparse(url: str, scheme: str | None = None) -> ParseResult:
     )
 
 
+def urlunparse(components: ParseResult) -> str:
+    return components.geturl()
+
 
 class SplitResult(ParseResult):
     def __getitem__(self, idx: int) -> str | None:
@@ -320,3 +318,7 @@ def urlsplit(url: str, scheme: str | None = None) -> SplitResult:
         query=pr.query,
         fragment=pr.fragment,
     )
+
+
+def urlunsplit(components: SplitResult) -> str:
+    return components.geturl()
