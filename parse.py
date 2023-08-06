@@ -2,18 +2,35 @@
 urllib.parse is unmaintainable, so this is a clean-slate rewrite of urllib.parse
 I am shooting for RFC 3986 compatibility.
 
+Differences from urllib:
+    - Removal of all deprecated components.
+    - Addition of uriparse and relativerefparse. Use of these should be encouraged over urlparse.
+
 To do:
-    - Add support for bytes (ParseResultBytes, ParseResult.encode)
-    - Add urljoin, parse_qs, parse_qsl, urldefrag?
-    - Rename ParseResult to URL?
-    - Implement __setitem__?
-    - Support RFC 3987?
+    - Add support for allow_fragment
+    - Add support for bytes
+    - Support RFC 3987
+    - Implement __setitem__
+    - Add parse_qs, parse_qsl, urldefrag?
     - Support RFC 6874??
 """
 
 import dataclasses
 import re
+import warnings
+
 from typing import Iterator
+
+__all__ = [
+    "ParseResult",
+    "SplitResult",
+    "urlparse",
+    "urlunparse",
+    "urlsplit",
+    "urlunsplit",
+    "urljoin",
+]
+
 
 # I have less of a problem with these functions, so I'm cool importing them from urllib:
 from urllib.parse import (
@@ -24,7 +41,6 @@ from urllib.parse import (
     unquote_plus,
     unquote_to_bytes,
     urlencode,
-    unwrap,
 )
 
 # Each of these ABNF rules is from RFC 3986 or 5234.
@@ -148,16 +164,17 @@ _HIER_PART: str = rf"(?://{_AUTHORITY}{_PATH_ABEMPTY}|{_PATH_ABSOLUTE}|{_PATH_RO
 
 # URI = scheme ":" hier-part [ "?" query ] [ "#" fragment ]
 _URI: str = rf"\A{_SCHEME}:{_HIER_PART}(?:\?{_QUERY})?(?:#{_FRAGMENT})?\Z"
+_URI_PAT: re.Pattern[str] = re.compile(_URI)
 
 # relative-part = "//" authority path-abempty / path-absolute / path-noscheme / path-empty
 _RELATIVE_PART: str = rf"(?://{_AUTHORITY}{_PATH_ABEMPTY}|{_PATH_ABSOLUTE}|{_PATH_NOSCHEME}|{_PATH_EMPTY})"
 
 # relative-ref  = relative-part [ "?" query ] [ "#" fragment ]
 _RELATIVE_REF: str = rf"\A{_RELATIVE_PART}(?:\?{_QUERY})?(?:#{_FRAGMENT})?\Z"
-
+_RELATIVE_REF_PAT: re.Pattern[str] = re.compile(_RELATIVE_REF)
 
 @dataclasses.dataclass
-class ParseResult:
+class URIReference:
     """A class to hold a URI reference.
     Counterpart to urllib's ParseResult and ParseResultBytes.
     """
@@ -175,7 +192,7 @@ class ParseResult:
         scheme: str | None,
         userinfo: str | None,
         host: str | None,
-        port: str | None,
+        port: str | int | None,
         path: str,
         query: str | None,
         fragment: str | None,
@@ -183,10 +200,194 @@ class ParseResult:
         self.scheme = scheme.lower() if scheme else None
         self.userinfo = _capitalize_percent_encodings(userinfo) if userinfo else None
         self.host = _capitalize_percent_encodings(host.lower()) if host else None
-        self.port = int(port) if port else None
+        if isinstance(port, str):
+            self.port = int(port)
+        else:
+            if isinstance(port, int) and port < 0:
+                raise ValueError("negative ports are invalid")
+            self.port = port
         self.path = _capitalize_percent_encodings(path)
         self.query = _capitalize_percent_encodings(query) if query else None
         self.fragment = _capitalize_percent_encodings(fragment) if fragment else None
+
+    def __str__(self) -> str:
+        """Direct translation of RFC 3986 section 5.3"""
+        result: str = ""
+        if self.scheme is not None:
+            result += self.scheme + ":"
+        if self.authority is not None:
+            result += "//" + self.authority
+        result += self.path
+        if self.query is not None:
+            result += "?" + self.query
+        if self.fragment is not None:
+            result += "#" + self.fragment
+        return result
+
+    @property
+    def authority(self) -> str | None:
+        if self.host is None:
+            return None
+        result: str = ""
+        if self.userinfo is not None:
+            result += self.userinfo + "@"
+        result += self.host
+        if self.port is not None:
+            result += ":" + str(self.port)
+        return result
+
+def _capitalize_percent_encodings(string: str) -> str:
+    """Returns string with all percent-encoded bytes expressed in capital letters.
+    e.g. _capitalize_percent_encodings("example%2ecom") == "example%2Ecom"
+    """
+    for m in re.finditer(rf"%(?:[a-f]{_HEXDIG}|{_HEXDIG}[a-f])", string):
+        string = (
+            string[: m.start()]
+            + string[m.start() : m.end()].upper()
+            + string[m.end() :]
+        )
+    return string
+
+def uriparse(url: str) -> URIReference:
+    """RFC 3986-compliant URI parser."""
+    m: re.Match[str] | None = re.match(_URI_PAT, url)
+    if m is None:
+        raise ValueError("failed to parse URI")
+    return URIReference(
+        scheme=m["scheme"],
+        userinfo=m["userinfo"],
+        host=m["host"],
+        port=m["port"],
+        path=m[next(filter(lambda path_kind: m[path_kind] is not None, ("path_abempty", "path_absolute", "path_empty", "path_rootless")))],
+        query=m["query"],
+        fragment=m["fragment"],
+    )
+
+
+def relativerefparse(url: str) -> URIReference:
+    """RFC 3986-compliant relative-ref parser."""
+    path_kinds: list[str] = []
+    m: re.Match[str] | None = re.match(_RELATIVE_REF_PAT, url)
+    if m is None:
+        raise ValueError("failed to parse relative-ref")
+    return URIReference(
+        scheme=None,
+        userinfo=m["userinfo"],
+        host=m["host"],
+        port=m["port"],
+        path=m[next(filter(lambda path_kind: m[path_kind] is not None, ("path_abempty", "path_absolute", "path_empty", "path_noscheme")))],
+        query=m["query"],
+        fragment=m["fragment"],
+    )
+
+
+def urireferenceparse(url: str) -> URIReference:
+    """RFC 3986-compliant URI-Reference parser.
+    Only use this when you don't know whether you want to parse a URI or a relative-ref.
+    """
+    try:
+        return uriparse(url)
+    except ValueError:
+        pass
+    try:
+        return relativerefparse(url)
+    except ValueError:
+        pass
+    raise ValueError("failed to parse URI-Reference")
+
+def _remove_dot_segments(path: str) -> str:
+    """Implementation of the "remove_dot_segments" routine from RFC 3986 section 5.2.4"""
+    result: str = ""
+    while len(path) > 0:
+        if path.startswith("./") or path.startswith("../"):
+            _, _, path = path.partition("/")
+        elif path.startswith("/./") or path == "/.":
+            path = "/" + path[len("/./"):]
+        elif path.startswith("/../") or path == "/..":
+            path = "/" + path[len("/../"):]
+            result, _, _ = result.rpartition("/")
+        elif path in (".", ".."):
+            path = ""
+        else:
+            if path.startswith("/"):
+                _, _, path = path.partition("/")
+                result += "/"
+            first_seg, slash, rest = path.partition("/")
+            path = slash + rest
+            result += first_seg
+    return result
+
+
+def _merge_paths(base: URIReference, r: URIReference) -> str:
+    """Implementation of the "merge" routine defined in RFC 3986 section 5.2.3"""
+    if base.host is not None and len(base.path) == 0:
+        return "/" + r.path
+    dirname, slash, _ = base.path.rpartition("/")
+    return dirname + slash + r.path
+
+def urijoin(base: str | URIReference, r: str | URIReference) -> URIReference:
+    """Implementation of the "Transform References" algorithm from RFC 3986 section 5.2.2"""
+    if isinstance(base, str):
+        base = uriparse(base)
+    if isinstance(r, str):
+        r = urireferenceparse(r)
+
+    scheme: str | None
+    userinfo: str | None
+    host: str | None
+    port: int | None
+    path: str
+    query: str | None
+    fragment: str | None
+
+    # This is a direct translation of the pseudocode in the RFC.
+    # It could be made prettier, but I'm leaving it like this because
+    # it's easy to check that it's the same as the RFC.
+    if r.scheme is not None:
+        scheme = r.scheme
+        authority = r.authority
+        path = _remove_dot_segments(r.path)
+        query = r.query
+    else:
+        if r.authority is not None:
+            authority = r.authority
+            path = _remove_dot_segments(r.path)
+            query = r.query
+        else:
+            if len(r.path) == 0:
+                path = base.path
+                if r.query is not None:
+                    query = r.query
+                else:
+                    query = base.query
+            else:
+                if r.path.startswith("/"):
+                    path = _remove_dot_segments(r.path)
+                else:
+                    path = _merge_paths(base, r)
+                    path = _remove_dot_segments(path)
+                query = r.query
+            authority = base.authority
+        scheme = base.scheme
+    fragment = r.fragment
+
+    return URIReference(
+        scheme=scheme,
+        userinfo=userinfo,
+        host=host,
+        port=port,
+        path=path,
+        query=query,
+        fragment=fragment,
+    )
+
+
+############################################################################################################
+#------------- Everything below here is crud that we need for compatibility with urllib.parse -------------#
+############################################################################################################
+
+class ParseResult(URIReference):
+    """Deprecated. A subclass of URIReference with a focus on compatibility with urllib."""
 
     def __getitem__(self, idx: int) -> str | None:
         """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it."""
@@ -205,33 +406,30 @@ class ParseResult:
             )
         )
 
+    @classmethod
+    def from_urireference(cls, uriref: URIReference):
+        return cls(
+            scheme=uriref.scheme,
+            userinfo=uriref.userinfo,
+            host=uriref.host,
+            port=uriref.port,
+            path=uriref.path,
+            query=uriref.query,
+            fragment=uriref.fragment,
+        )
+
     def geturl(self) -> str:
-        result: str = ""
-        if self.scheme is not None:
-            result += self.scheme + ":"
-        if self.host is not None:
-            result += "//"
-        if self.userinfo is not None:
-            result += self.userinfo + "@"
-        if self.host is not None:
-            result += self.host
-        if self.port is not None:
-            result += ":" + str(self.port)
-        result += self.path
-        if self.query is not None:
-            result += "?" + self.query
-        if self.fragment is not None:
-            result += "#" + self.fragment
-        return result
+        """Returns URL in string form."""
+        return str(self)
 
     @property
     def hostname(self) -> str:
-        """Only here for urllib compatibility. Returns self.host."""
+        """Returns self.host."""
         return self.host if self.host is not None else ""
 
     @property
     def netloc(self) -> str:
-        """Only here for urllib compatibility. Returns username@host:port separated by a colon."""
+        """Returns username@host:port separated by a colon."""
         result: str = ""
         if self.userinfo is not None:
             result += self.userinfo + "@"
@@ -243,14 +441,14 @@ class ParseResult:
 
     @property
     def params(self) -> str:
-        """Only here for urllib compatibility. Returns everything after the first semicolon in the last path segment."""
+        """Returns everything after the first semicolon in the last path segment."""
         _, _, last_seg = self.path.rpartition("/")
         _, _, result = last_seg.rpartition(";")
         return result
 
     @property
     def password(self) -> str | None:
-        """Only here for urllib compatibility. Returns everything after the first colon in the userinfo."""
+        """Returns everything after the first colon in the userinfo."""
         if self.userinfo is not None:
             colon_idx: int = self.userinfo.find(":")
             if colon_idx == -1:
@@ -260,65 +458,37 @@ class ParseResult:
 
     @property
     def username(self) -> str:
-        """Only here for urllib compatibility. Returns everything before the first colon in the userinfo."""
+        """Returns everything before the first colon in the userinfo."""
         if self.userinfo is not None:
             result, _, _ = self.userinfo.partition(":")
             return result
         return ""
 
-
-def _capitalize_percent_encodings(string: str) -> str:
-    """Returns string with all percent-encoded bytes expressed with capital letters.
-    e.g. _capitalize_percent_encodings("example%2ecom") == "example%2Ecom"
-    """
-    for m in re.finditer(rf"%(?:[a-f]{_HEXDIG}|{_HEXDIG}[a-f])", string):
-        string = (
-            string[: m.start()]
-            + string[m.start() : m.end()].upper()
-            + string[m.end() :]
-        )
-    return string
-
-
-def urlparse(url: str, scheme: str | None = None) -> ParseResult:
-    """The URL parser.
-    Changes from urllib:
-        - No allow_fragments parameter.
-    """
-
-    if scheme is not None and re.match(rf"\A{_SCHEME}\Z", scheme) is None:
-        raise ValueError("invalid scheme")
-
-    path_kinds: list[str] = ["path_abempty", "path_absolute", "path_empty"]
-    if m := re.match(_URI, url):
-        path_kinds.append("path_rootless")
-        scheme = m["scheme"]
-    elif m := re.match(_RELATIVE_REF, url):
-        path_kinds.append("path_noscheme")
-    else:
-        raise ValueError("failed to parse URL.")
-    return ParseResult(
-        scheme=scheme,
-        userinfo=m["userinfo"],
-        host=m["host"],
-        port=m["port"],
-        path=m[next(filter(lambda path_kind: m[path_kind] is not None, path_kinds))],
-        query=m["query"],
-        fragment=m["fragment"],
-    )
-
-
-def urlunparse(components: ParseResult) -> str:
-    return components.geturl()
+def urlparse(url: str, scheme: str = "", allow_fragments: bool = True) -> ParseResult:
+    warnings.warn("urlparse is deprecated. Use uriparse, relativerefparse, or urireferenceparse instead.", DeprecationWarning, stacklevel=2)
+    if len(scheme) > 0 and re.match(rf"\A{_SCHEME}\Z", scheme) is None:
+        raise ValueError("failed to parse scheme")
+    try:
+        return ParseResult.from_urireference(uriparse(url))
+    except ValueError:
+        pass
+    try:
+        rr: URIReference = relativerefparse(url)
+        if len(scheme) > 0:
+            rr.scheme = scheme
+        return ParseResult.from_urireference(rr)
+    except ValueError:
+        pass
+    raise ValueError("failed to parse URL")
 
 
 class SplitResult(ParseResult):
     def __getitem__(self, idx: int) -> str | None:
-        """urllib compatibility function. The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
+        """The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
         return list(self)[idx]
 
     def __iter__(self) -> Iterator[str]:
-        """urllib compatibility function. The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
+        """The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
         return iter(
             (
                 self.scheme if self.scheme else "",
@@ -330,22 +500,6 @@ class SplitResult(ParseResult):
         )
 
 
-def urlsplit(url: str, scheme: str | None = None) -> SplitResult:
-    """Don't use this. Use urlparse instead. This is here for compatibility only.
-    Changes from urllib:
-        - No allow_fragments parameter.
-    """
-    pr: ParseResult = urlparse(url, scheme)
-    return SplitResult(
-        scheme=pr.scheme,
-        userinfo=pr.userinfo,
-        host=pr.host,
-        port=str(pr.port),
-        path=pr.path,
-        query=pr.query,
-        fragment=pr.fragment,
-    )
-
-
-def urlunsplit(components: SplitResult) -> str:
-    return components.geturl()
+def urlsplit(url: str, scheme: str = "", allow_fragments: bool = True) -> SplitResult:
+    """Deprecated."""
+    return SplitResult.from_urireference(urlparse(url, scheme))
