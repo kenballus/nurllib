@@ -15,7 +15,7 @@ import dataclasses
 import re
 from typing import Iterator
 # I have less of a problem with these functions, so I'm cool importing them from urllib:
-from urllib.parse import quote, quote_from_bytes, quote_plus, quote_from_bytes, unquote, unquote_plus, unquote_to_bytes, urlencode, unwrap
+from urllib.parse import quote, quote_from_bytes, quote_plus, unquote, unquote_plus, unquote_to_bytes, urlencode, unwrap
 
 # Each of these ABNF rules is from RFC 3986 or 5234.
 
@@ -165,7 +165,7 @@ class ParseResult:
         self.userinfo = _capitalize_percent_encodings(userinfo) if userinfo else None
         self.host = _capitalize_percent_encodings(host.lower()) if host else None
         self.port = int(port) if port else None
-        self.path = _capitalize_percent_encodings(path) if path else None
+        self.path = _capitalize_percent_encodings(path)
         self.query = _capitalize_percent_encodings(query) if query else None
         self.fragment = _capitalize_percent_encodings(fragment) if fragment else None
 
@@ -208,7 +208,7 @@ class ParseResult:
     @property
     def hostname(self) -> str:
         """Only here for urllib compatibility. Returns self.host."""
-        return self.host
+        return self.host if self.host is not None else ""
 
     @property
     def netloc(self) -> str:
@@ -230,18 +230,22 @@ class ParseResult:
         return result
 
     @property
-    def password(self) -> str:
+    def password(self) -> str | None:
         """Only here for urllib compatibility. Returns everything after the first colon in the userinfo."""
-        colon_idx: int = self.userinfo.find(":")
-        if colon_idx == -1:
-            return None
-        return self.userinfo[colon_idx + 1 :]
+        if self.userinfo is not None:
+            colon_idx: int = self.userinfo.find(":")
+            if colon_idx == -1:
+                return None
+            return self.userinfo[colon_idx + 1 :]
+        return None
 
     @property
     def username(self) -> str:
         """Only here for urllib compatibility. Returns everything before the first colon in the userinfo."""
-        result, _, _ = self.userinfo.partition(":")
-        return result
+        if self.userinfo is not None:
+            result, _, _ = self.userinfo.partition(":")
+            return result
+        return ""
 
 
 def _capitalize_percent_encodings(string: str) -> str:
@@ -275,7 +279,7 @@ def urlparse(url: str, scheme: str | None = None) -> ParseResult:
         userinfo=m["userinfo"],
         host=m["host"],
         port=m["port"],
-        path=next(filter(lambda path_kind: m[path_kind] is not None, path_kinds)),
+        path=m[next(filter(lambda path_kind: m[path_kind] is not None, path_kinds))],
         query=m["query"],
         fragment=m["fragment"],
     )
@@ -313,7 +317,7 @@ def urlsplit(url: str, scheme: str | None = None) -> SplitResult:
         scheme=pr.scheme,
         userinfo=pr.userinfo,
         host=pr.host,
-        port=pr.port,
+        port=str(pr.port),
         path=pr.path,
         query=pr.query,
         fragment=pr.fragment,
