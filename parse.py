@@ -14,8 +14,18 @@ To do:
 import dataclasses
 import re
 from typing import Iterator
+
 # I have less of a problem with these functions, so I'm cool importing them from urllib:
-from urllib.parse import quote, quote_from_bytes, quote_plus, unquote, unquote_plus, unquote_to_bytes, urlencode, unwrap
+from urllib.parse import (
+    quote,
+    quote_from_bytes,
+    quote_plus,
+    unquote,
+    unquote_plus,
+    unquote_to_bytes,
+    urlencode,
+    unwrap,
+)
 
 # Each of these ABNF rules is from RFC 3986 or 5234.
 
@@ -160,7 +170,16 @@ class ParseResult:
     query: str | None
     fragment: str | None
 
-    def __init__(self, scheme: str | None, userinfo: str | None, host: str | None, port: str | None, path: str, query: str | None, fragment: str | None):
+    def __init__(
+        self,
+        scheme: str | None,
+        userinfo: str | None,
+        host: str | None,
+        port: str | None,
+        path: str,
+        query: str | None,
+        fragment: str | None,
+    ):
         self.scheme = scheme.lower() if scheme else None
         self.userinfo = _capitalize_percent_encodings(userinfo) if userinfo else None
         self.host = _capitalize_percent_encodings(host.lower()) if host else None
@@ -253,7 +272,11 @@ def _capitalize_percent_encodings(string: str) -> str:
     e.g. _capitalize_percent_encodings("example%2ecom") == "example%2Ecom"
     """
     for m in re.finditer(rf"%(?:[a-f]{_HEXDIG}|{_HEXDIG}[a-f])", string):
-        string = string[:m.start()] + string[m.start():m.end()].upper() + string[m.end():]
+        string = (
+            string[: m.start()]
+            + string[m.start() : m.end()].upper()
+            + string[m.end() :]
+        )
     return string
 
 
