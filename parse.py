@@ -161,13 +161,13 @@ class ParseResult:
     fragment: str | None
 
     def __init__(self, scheme: str | None, userinfo: str | None, host: str | None, port: int | None, path: str, query: str | None, fragment: str | None):
-    self.scheme = scheme.lower()
-    self.userinfo = _capitalize_percent_encodings(userinfo)
-    self.host = _capitalize_percent_encodings(host.lower())
-    self.port = port
-    self.path = _capitalize_percent_encodings(path)
-    self.query = _capitalize_percent_encodings(query)
-    self.fragment = _capitalize_percent_encodings(fragment)
+        self.scheme = scheme.lower()
+        self.userinfo = _capitalize_percent_encodings(userinfo)
+        self.host = _capitalize_percent_encodings(host.lower())
+        self.port = port
+        self.path = _capitalize_percent_encodings(path)
+        self.query = _capitalize_percent_encodings(query)
+        self.fragment = _capitalize_percent_encodings(fragment)
 
     def __getitem__(self, idx: int) -> str | None:
         """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it."""
@@ -248,8 +248,9 @@ def _capitalize_percent_encodings(string: str) -> str:
     """Returns string with all percent-encoded bytes expressed with capital letters.
     e.g. _capitalize_percent_encodings("example%2ecom") == "example%2Ecom"
     """
-    for m in re.finditer(rf"%(?:[a-f]{_HEXDIG}|{_HEXDIG}[a-f])"):
+    for m in re.finditer(rf"%(?:[a-f]{_HEXDIG}|{_HEXDIG}[a-f])", string):
         string = string[:m.start()] + string[m.start():m.end()].upper() + string[m.end():]
+    return string
 
 
 def urlparse(url: str, scheme: str | None = None) -> ParseResult:
@@ -267,7 +268,7 @@ def urlparse(url: str, scheme: str | None = None) -> ParseResult:
         uri_host: str | None = uri_match["host"]
         uri_port_str: str | None = uri_match["port"]
         uri_port: int | None = int(uri_port_str) if uri_port_str else None
-        if port > 65535:
+        if uri_port > 65535:
             raise ValueError("port out of range")
         uri_path: str = (
             uri_match["path_abempty"]
@@ -287,12 +288,13 @@ def urlparse(url: str, scheme: str | None = None) -> ParseResult:
             query=uri_query,
             fragment=uri_fragment,
         )
-    elif rr_match := re.match(_RELATIVE_REF, url):
+
+    if rr_match := re.match(_RELATIVE_REF, url):
         rr_userinfo: str | None = rr_match["userinfo"]
         rr_host: str | None = rr_match["host"]
         rr_port_str: str | None = rr_match["port"]
         rr_port: int | None = int(rr_port_str) if rr_port_str else None
-        if port > 65535:
+        if rr_port > 65535:
             raise ValueError("port out of range")
         rr_path: str = (
             rr_match["path_abempty"]
@@ -312,8 +314,8 @@ def urlparse(url: str, scheme: str | None = None) -> ParseResult:
             query=rr_query,
             fragment=rr_fragment,
         )
-    else:
-        raise ValueError("failed to parse URL.")
+
+    raise ValueError("failed to parse URL.")
 
 
 class SplitResult(ParseResult):
