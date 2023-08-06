@@ -5,17 +5,17 @@ I am shooting for RFC 3986 compatibility.
 To do:
     - Add support for bytes (ParseResultBytes, ParseResult.encode)
     - Add urlunsplit
-    - Decide whether it's worth it to implement __iter__ on our objects
-    - Decide whether it's worth it to implement urlsplit (I think no)
+    - Decide whether it's worth it to implement __setitem__
     - Support RFC 3987?
     - Support RFC 6874??
-    - Combine _URI and _RELATIVE_REF? (will require renaming all the capture groups)
+    - Combine _URI and _RELATIVE_REF? (will require renaming the capture groups)
     - Make a function that turns a URL's path into a pathlib.Path?
 """
 
 import dataclasses
 import re
-from urllib.parse import quote, unquote # I have less of a problem with these functions
+from typing import Iterator
+from urllib.parse import quote, unquote  # I have less of a problem with these functions
 
 # Each of these ABNF rules is from RFC 3986 or 5234.
 
@@ -88,7 +88,7 @@ _H16: str = r"(?:[0-9A-F]{1,4})"
 # ls32 = ( h16 ":" h16 ) / IPv4address
 _LS32: str = rf"(?:{_H16}:{_H16}|{_IPV4ADDRESS})"
 
-# IPv6address =                            6( h16 ":" ) ls32
+# IPv6address =                                      6( h16 ":" ) ls32
 #                       /                       "::" 5( h16 ":" ) ls32
 #                       / [               h16 ] "::" 4( h16 ":" ) ls32
 #                       / [ *1( h16 ":" ) h16 ] "::" 3( h16 ":" ) ls32
@@ -134,9 +134,7 @@ _PORT: str = rf"(?P<port>{_DIGIT}*)"
 _AUTHORITY: str = rf"(?:(?:{_USERINFO}@)?{_HOST}(?::{_PORT})?)"
 
 # hier-part = "//" authority path-abempty / path-absolute / path-rootless / path-empty
-_HIER_PART: str = (
-    rf"(?://{_AUTHORITY}{_PATH_ABEMPTY}|{_PATH_ABSOLUTE}|{_PATH_ROOTLESS}|{_PATH_EMPTY})"
-)
+_HIER_PART: str = rf"(?://{_AUTHORITY}{_PATH_ABEMPTY}|{_PATH_ABSOLUTE}|{_PATH_ROOTLESS}|{_PATH_EMPTY})"
 
 # URI = scheme ":" hier-part [ "?" query ] [ "#" fragment ]
 _URI: str = rf"\A{_SCHEME}:{_HIER_PART}(?:\?{_QUERY})?(?:#{_FRAGMENT})?\Z"
@@ -147,11 +145,13 @@ _RELATIVE_PART: str = rf"(?://{_AUTHORITY}{_PATH_ABEMPTY}|{_PATH_ABSOLUTE}|{_PAT
 # relative-ref  = relative-part [ "?" query ] [ "#" fragment ]
 _RELATIVE_REF: str = rf"\A{_RELATIVE_PART}(?:\?{_QUERY})?(?:#{_FRAGMENT})?\Z"
 
+
 @dataclasses.dataclass
 class ParseResult:
     """A class to hold a URI reference.
     Counterpart to urllib's ParseResult and ParseResultBytes.
     """
+
     scheme: str | None
     userinfo: str | None
     host: str | None
@@ -160,42 +160,54 @@ class ParseResult:
     query: str | None
     fragment: str | None
 
-    def __getitem__(self, idx: int) -> str:
-        """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it.
-        """
+    def __getitem__(self, idx: int) -> str | None:
+        """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it."""
         match idx:
             case 0:
-                return self.scheme
+                return self.scheme if self.scheme else ""
             case 1:
-                return self.netloc
+                return self.netloc if self.netloc else ""
             case 2:
-                return self.path
+                return self.path if self.path else ""
             case 3:
-                return self.params
+                return self.params if self.params else ""
             case 4:
-                return self.query
+                return self.query if self.query else ""
             case 5:
-                return self.fragment
+                return self.fragment if self.fragment else ""
             case _:
                 raise IndexError("index out of range")
 
-
+    def __iter__(self) -> Iterator[str]:
+        """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it."""
+        return iter(
+            (
+                self.scheme if self.scheme else "",
+                self.netloc if self.netloc else "",
+                self.path if self.path else "",
+                self.params if self.params else "",
+                self.query if self.query else "",
+                self.fragment if self.fragment else "",
+            )
+        )
 
     def geturl(self) -> str:
         result: str = ""
-        if scheme is not None:
-            result += scheme + ":"
-        if userinfo is not None:
-            result += userinfo + "@"
+        if self.scheme is not None:
+            result += self.scheme + ":"
         if host is not None:
-            result += host
-        if port is not None:
-            result += ":" + str(port)
-        result += path
-        if query is not None:
-            result += "?" + query
-        if fragment is not None:
-            result += "#" + fragment
+            result += "//"
+        if self.userinfo is not None:
+            result += self.userinfo + "@"
+        if self.host is not None:
+            result += self.host
+        if self.port is not None:
+            result += ":" + str(self.port)
+        result += self.path
+        if self.query is not None:
+            result += "?" + self.query
+        if self.fragment is not None:
+            result += "#" + self.fragment
         return result
 
     @property
@@ -228,7 +240,7 @@ class ParseResult:
         colon_idx: int = self.userinfo.find(":")
         if colon_idx == -1:
             return None
-        return self.userinfo[colon_idx + 1:]
+        return self.userinfo[colon_idx + 1 :]
 
     @property
     def username(self) -> str:
@@ -236,11 +248,15 @@ class ParseResult:
         result, _, _ = self.userinfo.partition(":")
         return result
 
+
 def urlparse(url: str, scheme: str | None = None) -> ParseResult:
     """The URL parser.
     Changes from urllib:
         - No allow_fragments parameter.
     """
+
+    if scheme is not None and re.match(rf"\A{_SCHEME}\Z", scheme) is None:
+        raise ValueError("invalid scheme")
 
     if uri_match := re.match(_URI, url):
         uri_scheme: str = uri_match["scheme"]
@@ -248,36 +264,87 @@ def urlparse(url: str, scheme: str | None = None) -> ParseResult:
         uri_host: str | None = uri_match["host"]
         uri_port_str: str | None = uri_match["port"]
         uri_port: int | None = int(uri_port_str) if uri_port_str else None
-        uri_path: str = uri_match["path_abempty"] or uri_match["path_absolute"] or uri_match["path_rootless"] or uri_match["path_empty"]
+        uri_path: str = (
+            uri_match["path_abempty"]
+            or uri_match["path_absolute"]
+            or uri_match["path_rootless"]
+            or uri_match["path_empty"]
+        )
         uri_query: str | None = uri_match["query"]
         uri_fragment: str | None = uri_match["fragment"]
 
         return ParseResult(
-                scheme=uri_scheme,
-                userinfo=uri_userinfo,
-                host=uri_host,
-                port=uri_port,
-                path=uri_path,
-                query=uri_query,
-                fragment=uri_fragment,
-            )
+            scheme=uri_scheme,
+            userinfo=uri_userinfo,
+            host=uri_host,
+            port=uri_port,
+            path=uri_path,
+            query=uri_query,
+            fragment=uri_fragment,
+        )
     elif rr_match := re.match(_RELATIVE_REF, url):
         rr_userinfo: str | None = rr_match["userinfo"]
         rr_host: str | None = rr_match["host"]
         rr_port_str: str | None = rr_match["port"]
         rr_port: int | None = int(rr_port_str) if rr_port_str else None
-        rr_path: str = rr_match["path_abempty"] or rr_match["path_absolute"] or rr_match["path_noscheme"] or rr_match["path_empty"]
+        rr_path: str = (
+            rr_match["path_abempty"]
+            or rr_match["path_absolute"]
+            or rr_match["path_noscheme"]
+            or rr_match["path_empty"]
+        )
         rr_query: str | None = rr_match["query"]
         rr_fragment: str | None = rr_match["fragment"]
 
         return ParseResult(
-                scheme=scheme,
-                userinfo=rr_userinfo,
-                host=rr_host,
-                port=rr_port,
-                path=rr_path,
-                query=rr_query,
-                fragment=rr_fragment,
-            )
+            scheme=scheme,
+            userinfo=rr_userinfo,
+            host=rr_host,
+            port=rr_port,
+            path=rr_path,
+            query=rr_query,
+            fragment=rr_fragment,
+        )
     else:
         raise ValueError("failed to parse URL.")
+
+class SplitResult(ParseResult):
+    def __getitem__(self, idx: int) -> str | None:
+        """urllib compatibility function. The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
+        match idx:
+            case 0:
+                return self.scheme if self.scheme else ""
+            case 1:
+                return self.netloc if self.netloc else ""
+            case 2:
+                return self.path if self.path else ""
+            case 3:
+                return self.query if self.query else ""
+            case 4:
+                return self.fragment if self.fragment else ""
+            case _:
+                raise IndexError("index out of range")
+
+    def __iter__(self) -> Iterator[str]:
+        """urllib compatibility function. The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
+        return iter(
+            (
+                self.scheme if self.scheme else "",
+                self.netloc if self.netloc else "",
+                self.path if self.path else "",
+                self.query if self.query else "",
+                self.fragment if self.fragment else "",
+            )
+        )
+
+def urlsplit(url: str, scheme: str | None = None) -> SplitResult:
+    pr: ParseResult = urlparse(url, scheme)
+    return SplitResult(
+        scheme=pr.scheme,
+        userinfo=pr.userinfo,
+        host=pr.host,
+        port=pr.port,
+        path=pr.path,
+        query=pr.query,
+        fragment=pr.fragment,
+    )
