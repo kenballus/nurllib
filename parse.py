@@ -160,6 +160,15 @@ class ParseResult:
     query: str | None
     fragment: str | None
 
+    def __init__(self, scheme: str | None, userinfo: str | None, host: str | None, port: int | None, path: str, query: str | None, fragment: str | None):
+    self.scheme = scheme.lower()
+    self.userinfo = _capitalize_percent_encodings(userinfo)
+    self.host = _capitalize_percent_encodings(host.lower())
+    self.port = port
+    self.path = _capitalize_percent_encodings(path)
+    self.query = _capitalize_percent_encodings(query)
+    self.fragment = _capitalize_percent_encodings(fragment)
+
     def __getitem__(self, idx: int) -> str | None:
         """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it."""
         return list(self)[idx]
@@ -181,7 +190,7 @@ class ParseResult:
         result: str = ""
         if self.scheme is not None:
             result += self.scheme + ":"
-        if host is not None:
+        if self.host is not None:
             result += "//"
         if self.userinfo is not None:
             result += self.userinfo + "@"
@@ -235,6 +244,14 @@ class ParseResult:
         return result
 
 
+def _capitalize_percent_encodings(string: str) -> str:
+    """Returns string with all percent-encoded bytes expressed with capital letters.
+    e.g. _capitalize_percent_encodings("example%2ecom") == "example%2Ecom"
+    """
+    for m in re.finditer(rf"%(?:[a-f]{_HEXDIG}|{_HEXDIG}[a-f])"):
+        string = string[:m.start()] + string[m.start():m.end()].upper() + string[m.end():]
+
+
 def urlparse(url: str, scheme: str | None = None) -> ParseResult:
     """The URL parser.
     Changes from urllib:
@@ -250,6 +267,8 @@ def urlparse(url: str, scheme: str | None = None) -> ParseResult:
         uri_host: str | None = uri_match["host"]
         uri_port_str: str | None = uri_match["port"]
         uri_port: int | None = int(uri_port_str) if uri_port_str else None
+        if port > 65535:
+            raise ValueError("port out of range")
         uri_path: str = (
             uri_match["path_abempty"]
             or uri_match["path_absolute"]
@@ -273,6 +292,8 @@ def urlparse(url: str, scheme: str | None = None) -> ParseResult:
         rr_host: str | None = rr_match["host"]
         rr_port_str: str | None = rr_match["port"]
         rr_port: int | None = int(rr_port_str) if rr_port_str else None
+        if port > 65535:
+            raise ValueError("port out of range")
         rr_path: str = (
             rr_match["path_abempty"]
             or rr_match["path_absolute"]
@@ -294,6 +315,7 @@ def urlparse(url: str, scheme: str | None = None) -> ParseResult:
     else:
         raise ValueError("failed to parse URL.")
 
+
 class SplitResult(ParseResult):
     def __getitem__(self, idx: int) -> str | None:
         """urllib compatibility function. The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
@@ -311,7 +333,12 @@ class SplitResult(ParseResult):
             )
         )
 
+
 def urlsplit(url: str, scheme: str | None = None) -> SplitResult:
+    """Don't use this. Use urlparse instead. This is here for compatibility only.
+    Changes from urllib:
+        - No allow_fragments parameter.
+    """
     pr: ParseResult = urlparse(url, scheme)
     return SplitResult(
         scheme=pr.scheme,
