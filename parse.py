@@ -2,15 +2,20 @@
 urllib.parse is unmaintainable, so this is a clean-slate rewrite of urllib.parse
 I am shooting for RFC 3986 compatibility.
 
-(Not necessarily good) ideas:
-    - Make URI path a pathlib.Path
-    - Support RFC 6874
-    - Support RFC 3987
-    - Combine _URI and _RELATIVE_REF
+To do:
+    - Add support for bytes (ParseResultBytes, ParseResult.encode)
+    - Add urlunsplit
+    - Decide whether it's worth it to implement __iter__ on our objects
+    - Decide whether it's worth it to implement urlsplit (I think no)
+    - Support RFC 3987?
+    - Support RFC 6874??
+    - Combine _URI and _RELATIVE_REF? (will require renaming all the capture groups)
+    - Make a function that turns a URL's path into a pathlib.Path?
 """
 
 import dataclasses
 import re
+from urllib.parse import quote, unquote # I have less of a problem with these functions
 
 # Each of these ABNF rules is from RFC 3986 or 5234.
 
@@ -143,7 +148,7 @@ _RELATIVE_PART: str = rf"(?://{_AUTHORITY}{_PATH_ABEMPTY}|{_PATH_ABSOLUTE}|{_PAT
 _RELATIVE_REF: str = rf"\A{_RELATIVE_PART}(?:\?{_QUERY})?(?:#{_FRAGMENT})?\Z"
 
 @dataclasses.dataclass
-class URLParseResult:
+class ParseResult:
     """A class to hold a URI reference.
     Counterpart to urllib's ParseResult and ParseResultBytes.
     """
@@ -155,7 +160,7 @@ class URLParseResult:
     query: str | None
     fragment: str | None
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> str:
         """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it.
         """
         match idx:
@@ -173,6 +178,8 @@ class URLParseResult:
                 return self.fragment
             case _:
                 raise IndexError("index out of range")
+
+
 
     def geturl(self) -> str:
         result: str = ""
@@ -218,12 +225,18 @@ class URLParseResult:
     @property
     def password(self) -> str:
         """Only here for urllib compatibility. Returns everything after the first colon in the userinfo."""
-        colon_idx: int = userinfo.find(":")
+        colon_idx: int = self.userinfo.find(":")
         if colon_idx == -1:
             return None
-        return self.userinfo[colon_index + 1:]
+        return self.userinfo[colon_idx + 1:]
 
-def urlparse(url: str, scheme: str | None = None) -> URLParseResult:
+    @property
+    def username(self) -> str:
+        """Only here for urllib compatibility. Returns everything before the first colon in the userinfo."""
+        result, _, _ = self.userinfo.partition(":")
+        return result
+
+def urlparse(url: str, scheme: str | None = None) -> ParseResult:
     """The URL parser.
     Changes from urllib:
         - No allow_fragments parameter.
@@ -239,7 +252,7 @@ def urlparse(url: str, scheme: str | None = None) -> URLParseResult:
         uri_query: str | None = uri_match["query"]
         uri_fragment: str | None = uri_match["fragment"]
 
-        return URLParseResult(
+        return ParseResult(
                 scheme=uri_scheme,
                 userinfo=uri_userinfo,
                 host=uri_host,
@@ -257,7 +270,7 @@ def urlparse(url: str, scheme: str | None = None) -> URLParseResult:
         rr_query: str | None = rr_match["query"]
         rr_fragment: str | None = rr_match["fragment"]
 
-        return URLParseResult(
+        return ParseResult(
                 scheme=scheme,
                 userinfo=rr_userinfo,
                 host=rr_host,
