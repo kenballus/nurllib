@@ -164,9 +164,12 @@ class ParseResult:
         self.scheme = scheme.lower()
         self.userinfo = _capitalize_percent_encodings(userinfo)
         self.host = _capitalize_percent_encodings(host.lower())
-        self.port = int(port)
-        if self.port > 65535:
-            raise ValueError("port number out of range")
+        if port:
+            self.port = int(port)
+            if self.port > 65535:
+                raise ValueError("port number out of range")
+        else:
+            port = None
         self.path = _capitalize_percent_encodings(path)
         self.query = _capitalize_percent_encodings(query)
         self.fragment = _capitalize_percent_encodings(fragment)
