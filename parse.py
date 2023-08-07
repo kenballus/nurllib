@@ -1,10 +1,9 @@
 """nurllib.parse
 urllib.parse is unmaintainable, so this is a clean-slate rewrite of urllib.parse
-I am shooting for compatibility with RFCs 3986, 3987, and 6874.
+I am shooting for compatibility with RFCs 3986 and 3987
 
 Differences from urllib:
     - Removal of all deprecated components.
-    - Addition of parse_uri and parse_relative_ref. Use of these should be encouraged over urlparse.
 
 To do:
     - Add support for bytes
@@ -12,11 +11,10 @@ To do:
 
 import dataclasses
 import re
-import warnings
 
 from typing import Iterator, Iterable
 
-# Each of these ABNF rules is from RFC 3986, 3987, 6874, or 5234.
+# Each of these ABNF rules is from RFC 3986, 3987, or 5234.
 
 # ALPHA = %x41-5A / %x61-7A
 _ALPHA: str = r"[A-Za-z]"
@@ -72,16 +70,16 @@ _IFRAGMENT: str = rf"(?P<fragment>(?:{_IPCHAR}|[/?])*)"
 _SCHEME: str = rf"(?P<scheme>{_ALPHA}(?:{_ALPHA}|{_DIGIT}|[+\-.])*)"
 
 # segment = *pchar
-_SEGMENT: str = f"{_PCHAR}*"
+_SEGMENT: str = rf"{_PCHAR}*"
 
 # isegment = *ipchar
-_ISEGMENT: str = f"{_IPCHAR}*"
+_ISEGMENT: str = rf"{_IPCHAR}*"
 
 # segment-nz = 1*pchar
-_SEGMENT_NZ: str = f"{_PCHAR}+"
+_SEGMENT_NZ: str = rf"{_PCHAR}+"
 
 # isegment-nz = 1*ipchar
-_ISEGMENT_NZ: str = f"{_IPCHAR}+"
+_ISEGMENT_NZ: str = rf"{_IPCHAR}+"
 
 # segment-nz-nc = 1*( unreserved / pct-encoded / sub-delims / "@" )
 _SEGMENT_NZ_NC: str = rf"(?:(?:{_UNRESERVED}|{_PCT_ENCODED}|{_SUB_DELIMS}|@)+)"
@@ -167,14 +165,8 @@ _IPV6ADDRESS: str = (
 # IPvFuture = "v" 1*HEXDIG "." 1*( unreserved / sub-delims / ":" )
 _IPVFUTURE: str = rf"(?:v{_HEXDIG}+\.(?:{_UNRESERVED}|{_SUB_DELIMS}|:)+)"
 
-# ZoneID = 1*( unreserved / pct-encoded )
-_ZONEID: str = rf"(?:{_UNRESERVED}|{_PCT_ENCODED})+"
-
-# IPv6addrz = IPv6address "%25" ZoneID
-_IPV6ADDRZ: str = rf"{_IPV6ADDRESS}%25{_ZONEID}"
-
 # IP-literal = "[" ( IPv6address / IPv6addrz / IPvFuture ) "]"
-_IP_LITERAL: str = rf"(?:\[(?:{_IPV6ADDRESS}|{_IPV6ADDRZ}|{_IPVFUTURE})\])"
+_IP_LITERAL: str = rf"(?:\[(?:{_IPV6ADDRESS}|{_IPVFUTURE})\])"
 
 # reg-name = *( unreserved / pct-encoded / sub-delims )
 _REG_NAME: str = rf"(?:(?:{_UNRESERVED}|{_PCT_ENCODED}|{_SUB_DELIMS})*)"
@@ -254,13 +246,13 @@ class IRIReference:
             self.port = int(port)
         else:
             if isinstance(port, int) and port < 0:
-                raise ValueError("negative ports are invalid")
+                raise ValueError("invalid port value")
             self.port = port
         self.path = _capitalize_percent_encodings(path)
         self.query = _capitalize_percent_encodings(query) if query else None
         self.fragment = _capitalize_percent_encodings(fragment) if fragment else None
 
-    def __str__(self) -> str:
+    def serialize(self) -> str:
         """Direct translation of RFC 3986 section 5.3"""
         result: str = ""
         if self.scheme is not None:
@@ -300,7 +292,9 @@ def _capitalize_percent_encodings(string: str) -> str:
     return string
 
 def parse_uri(uri: str) -> IRIReference:
-    """RFC 3986-compliant URI parser."""
+    """RFC 3986-compliant URI parser.
+    If you want to parse a URL that contains only ASCII characters (e.g. "http://example.org/path?query#fragment"), this is the function to use.
+    """
     m: re.Match[str] | None = re.match(_URI_PAT, uri)
     if m is None:
         raise ValueError("failed to parse URI")
@@ -316,7 +310,9 @@ def parse_uri(uri: str) -> IRIReference:
 
 
 def parse_iri(iri: str) -> IRIReference:
-    """RFC 3987-compliant IRI parser."""
+    """RFC 3987-compliant IRI parser.
+    If you want to parse a URL that contains non-ACII characters (e.g. "https://en.wiktionary.org/wiki/Ῥόδος?query#fragment"), this is the function to use.
+    """
     m: re.Match[str] | None = re.match(_IRI_PAT, iri)
     if m is None:
         raise ValueError("failed to parse IRI")
@@ -332,7 +328,9 @@ def parse_iri(iri: str) -> IRIReference:
 
 
 def parse_relative_ref(url: str) -> IRIReference:
-    """RFC 3986-compliant relative-ref parser."""
+    """RFC 3986-compliant relative-ref parser.
+    If you want to parse a relative reference that contains only ASCII characters (e.g. "//example.org/path?query#fragment"), this is the function to use.
+    """
     m: re.Match[str] | None = re.match(_RELATIVE_REF_PAT, url)
     if m is None:
         raise ValueError("failed to parse relative-ref")
@@ -348,7 +346,9 @@ def parse_relative_ref(url: str) -> IRIReference:
 
 
 def parse_irelative_ref(irelative_ref: str) -> IRIReference:
-    """RFC 3987-compliant irelative-ref parser."""
+    """RFC 3987-compliant irelative-ref parser.
+    If you want to parse a relative reference that contains non-ACII characters (e.g. "//en.wiktionary.org/wiki/Ῥόδος?query#fragment"), this is the function to use.
+    """
     m: re.Match[str] | None = re.match(_IRELATIVE_REF_PAT, irelative_ref)
     if m is None:
         raise ValueError("failed to parse irelative-ref")
@@ -505,8 +505,12 @@ class ParseResult(IRIReference):
             )
         )
 
+    def __repr__(self) -> str:
+        scheme, netloc, path, params, query, fragment = self
+        return f"ParseResult(scheme={repr(scheme)}, netloc={repr(netloc)}, path={repr(path)}, params={repr(params)}, query={repr(query)}, fragment={repr(fragment)})"
+
     @classmethod
-    def from_urireference(cls, uriref: IRIReference):
+    def from_irireference(cls, uriref: IRIReference):
         """Constructs a ParseResult (or child class) from a IRIReference"""
         return cls(
             scheme=uriref.scheme,
@@ -520,7 +524,7 @@ class ParseResult(IRIReference):
 
     def geturl(self) -> str:
         """Returns URL in string form."""
-        return str(self)
+        return self.serialize()
 
     @property
     def hostname(self) -> str:
@@ -576,31 +580,34 @@ class ParseResult(IRIReference):
 
 
 def urlparse(url: str, scheme: str = "", allow_fragments: bool = True) -> ParseResult:
-    """URI-Reference parser designed to be backwards-compatible with urllib.parse.urlparse."""
-    warnings.warn("urlparse is deprecated. Use parse_uri, parse_relative_ref, or parse_uri_reference instead.", DeprecationWarning, stacklevel=2)
+    """IRI-Reference parser designed to be backwards-compatible with urllib.parse.urlparse."""
+    scheme = re.sub("[\r\n\t]", "", scheme)
+    url = re.sub("[\r\n\t]", "", url)
     if len(scheme) > 0 and re.match(rf"\A{_SCHEME}\Z", scheme) is None:
         raise ValueError("failed to parse scheme")
 
     result: ParseResult
     try:
-        result = ParseResult.from_urireference(parse_uri(url))
+        result = ParseResult.from_irireference(parse_iri(url))
+        if not allow_fragments:
+            result.squish_fragment()
+        return result
     except ValueError:
-        try:
-            rr: IRIReference = parse_relative_ref(url)
-            if len(scheme) > 0:
-                rr.scheme = scheme
-            result = ParseResult.from_urireference(rr)
-            if not allow_fragments:
-                result.squish_fragment()
-        except ValueError:
-            raise ValueError("failed to parse URL")
-    if not allow_fragments:
-        result.squish_fragment()
-    return result
+        pass
+    try:
+        rr: IRIReference = parse_irelative_ref(url)
+        if len(scheme) > 0:
+            rr.scheme = scheme
+        result = ParseResult.from_irireference(rr)
+        if not allow_fragments:
+            result.squish_fragment()
+        return result
+    except ValueError:
+        pass
+    raise ValueError("failed to parse URL")
 
 def urlunparse(components: Iterable[str]) -> str:
     """Deprecated."""
-    warnings.warn("urlunparse is deprecated. Use IRIReference.__str__ instead.", DeprecationWarning, stacklevel=2)
     scheme, authority, path, params, query, fragment = components
     result: str = ""
     if len(scheme) > 0:
@@ -637,15 +644,10 @@ class SplitResult(ParseResult):
 
 def urlsplit(url: str, scheme: str = "", allow_fragments: bool = True) -> SplitResult:
     """Deprecated."""
-    warnings.warn("urlsplit is deprecated. Use parse_uri, parse_relative_ref, or parse_uri_reference instead.", DeprecationWarning, stacklevel=2)
-    result: SplitResult = SplitResult.from_urireference(urlparse(url, scheme))
-    if not allow_fragments:
-        result.squish_fragment()
-    return result
+    return SplitResult.from_irireference(urlparse(url, scheme=scheme, allow_fragments=allow_fragments))
 
 def urlunsplit(components: Iterable[str]) -> str:
     """Deprecated."""
-    warnings.warn("urlunsplit is deprecated. Use IRIReference.__str__ instead.", DeprecationWarning, stacklevel=2)
     scheme, authority, path, query, fragment = components
     result: str = ""
     if len(scheme) > 0:
