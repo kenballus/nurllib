@@ -4,17 +4,15 @@ I am shooting for compatibility with RFCs 3986 and 3987
 
 Differences from urllib:
     - Removal of all deprecated components.
-
-To do:
-    - Add support for bytes
 """
 
+import copy
 import dataclasses
 import re
 
-from typing import Iterator, Iterable
+from typing import Iterator, Iterable, Self
 
-# Each of these ABNF rules is from RFC 3986, 3987, or 5234.
+# Each of these ABNF rules is from RFC 3986, 3987, 6874, or 5234.
 
 # ALPHA = %x41-5A / %x61-7A
 _ALPHA: str = r"[A-Za-z]"
@@ -43,10 +41,10 @@ _UNRESERVED: str = rf"(?:{_ALPHA}|{_DIGIT}|[-._~])"
 _IUNRESERVED: str = rf"(?:{_ALPHA}|{_DIGIT}|[-._~]|{_UCSCHAR})"
 
 # pct-encoded = "%" HEXDIG HEXDIG
-_PCT_ENCODED: str = rf"(?:%{_HEXDIG}{_HEXDIG})"
+_PCT_ENCODED: str = rf"%{_HEXDIG}{_HEXDIG}"
 
 # sub-delims = "!" / "$" / "&" / "'" / "(" / ")" / "*" / "+" / "," / ";" / "="
-_SUB_DELIMS: str = r"(?:[!$&'()*+,;=])"
+_SUB_DELIMS: str = r"[!$&'()*+,;=]"
 
 # pchar = unreserved / pct-encoded / sub-delims / ":" / "@"
 _PCHAR: str = rf"(?:{_UNRESERVED}|{_PCT_ENCODED}|{_SUB_DELIMS}|[:@])"
@@ -82,10 +80,10 @@ _SEGMENT_NZ: str = rf"{_PCHAR}+"
 _ISEGMENT_NZ: str = rf"{_IPCHAR}+"
 
 # segment-nz-nc = 1*( unreserved / pct-encoded / sub-delims / "@" )
-_SEGMENT_NZ_NC: str = rf"(?:(?:{_UNRESERVED}|{_PCT_ENCODED}|{_SUB_DELIMS}|@)+)"
+_SEGMENT_NZ_NC: str = rf"(?:{_UNRESERVED}|{_PCT_ENCODED}|{_SUB_DELIMS}|@)+"
 
 # isegment-nz-nc = 1*( iunreserved / pct-encoded / sub-delims / "@" )
-_ISEGMENT_NZ_NC: str = rf"(?:(?:{_IUNRESERVED}|{_PCT_ENCODED}|{_SUB_DELIMS}|@)+)"
+_ISEGMENT_NZ_NC: str = rf"(?:{_IUNRESERVED}|{_PCT_ENCODED}|{_SUB_DELIMS}|@)+"
 
 # path-absolute = "/" [ segment-nz *( "/" segment ) ]
 _PATH_ABSOLUTE: str = rf"(?P<path_absolute>/(?:{_SEGMENT_NZ}(?:/{_SEGMENT})*)?)"
@@ -127,7 +125,7 @@ _IUSERINFO: str = rf"(?P<userinfo>(?:{_IUNRESERVED}|{_PCT_ENCODED}|{_SUB_DELIMS}
 _DEC_OCTET: str = rf"(?:{_DIGIT}|[1-9]{_DIGIT}|1{_DIGIT}{{2}}|2[0-4]{_DIGIT}|25[0-5])"
 
 # IPv4address = dec-octet "." dec-octet "." dec-octet "." dec-octet
-_IPV4ADDRESS: str = rf"(?:{_DEC_OCTET}\.{_DEC_OCTET}\.{_DEC_OCTET}\.{_DEC_OCTET})"
+_IPV4ADDRESS: str = rf"{_DEC_OCTET}\.{_DEC_OCTET}\.{_DEC_OCTET}\.{_DEC_OCTET}"
 
 # h16 = 1*4HEXDIG
 _H16: str = r"(?:[0-9A-F]{1,4})"
@@ -162,32 +160,42 @@ _IPV6ADDRESS: str = (
     + ")"
 )
 
-# IPvFuture = "v" 1*HEXDIG "." 1*( unreserved / sub-delims / ":" )
-_IPVFUTURE: str = rf"(?:v{_HEXDIG}+\.(?:{_UNRESERVED}|{_SUB_DELIMS}|:)+)"
+# ZoneID = 1*( unreserved / pct-encoded )
+_ZONEID = rf"(?:{_UNRESERVED}|{_PCT_ENCODED})+"
 
-# IP-literal = "[" ( IPv6address / IPv6addrz / IPvFuture ) "]"
-_IP_LITERAL: str = rf"(?:\[(?:{_IPV6ADDRESS}|{_IPVFUTURE})\])"
+# IPv6addrz = IPv6address "%25" ZoneID
+_IPV6ADDRZ = rf"{_IPV6ADDRESS}%25{_ZONEID}"
+
+# IPvFuture = "v" 1*HEXDIG "." 1*( unreserved / sub-delims / ":" )
+_IPVFUTURE: str = rf"v{_HEXDIG}+\.(?:{_UNRESERVED}|{_SUB_DELIMS}|:)+"
+
+# IP-literal = "[" ( IPv6address / IPvFuture ) "]"
+# (IRIs don't support zoneinfo, so we need both versions of this rule)
+_IIP_LITERAL: str = rf"\[(?:{_IPV6ADDRESS}|{_IPVFUTURE})\]"
+
+# IP-literal = "[" ( IPv6address / IPv6addrz / IPvFuture  ) "]"
+_IP_LITERAL: str = rf"\[(?:{_IPV6ADDRESS}|{_IPV6ADDRZ}|{_IPVFUTURE})\]"
 
 # reg-name = *( unreserved / pct-encoded / sub-delims )
-_REG_NAME: str = rf"(?:(?:{_UNRESERVED}|{_PCT_ENCODED}|{_SUB_DELIMS})*)"
+_REG_NAME: str = rf"(?:{_UNRESERVED}|{_PCT_ENCODED}|{_SUB_DELIMS})*"
 
 # ireg-name = *( iunreserved / pct-encoded / sub-delims )
-_IREG_NAME: str = rf"(?:(?:{_IUNRESERVED}|{_PCT_ENCODED}|{_SUB_DELIMS})*)"
+_IREG_NAME: str = rf"(?:{_IUNRESERVED}|{_PCT_ENCODED}|{_SUB_DELIMS})*"
 
 # host = IP-literal / IPv4address / reg-name
 _HOST: str = rf"(?P<host>{_IP_LITERAL}|{_IPV4ADDRESS}|{_REG_NAME})"
 
 # ihost = IP-literal / IPv4address / ireg-name
-_IHOST: str = rf"(?P<host>{_IP_LITERAL}|{_IPV4ADDRESS}|{_IREG_NAME})"
+_IHOST: str = rf"(?P<host>{_IIP_LITERAL}|{_IPV4ADDRESS}|{_IREG_NAME})"
 
 # port = *DIGIT
 _PORT: str = rf"(?P<port>{_DIGIT}*)"
 
 # authority = [ userinfo "@" ] host [ ":" port ]
-_AUTHORITY: str = rf"(?:(?:{_USERINFO}@)?{_HOST}(?::{_PORT})?)"
+_AUTHORITY: str = rf"(?:{_USERINFO}@)?{_HOST}(?::{_PORT})?"
 
 # iauthority = [ iuserinfo "@" ] ihost [ ":" port ]
-_IAUTHORITY: str = rf"(?:(?:{_IUSERINFO}@)?{_IHOST}(?::{_PORT})?)"
+_IAUTHORITY: str = rf"(?:{_IUSERINFO}@)?{_IHOST}(?::{_PORT})?"
 
 # hier-part = "//" authority path-abempty / path-absolute / path-rootless / path-empty
 _HIER_PART: str = rf"(?://{_AUTHORITY}{_PATH_ABEMPTY}|{_PATH_ABSOLUTE}|{_PATH_ROOTLESS}|{_PATH_EMPTY})"
@@ -219,7 +227,7 @@ _IRELATIVE_REF_PAT: re.Pattern[str] = re.compile(_IRELATIVE_REF)
 
 @dataclasses.dataclass
 class IRIReference:
-    """A class to hold an IRI-Reference."""
+    """A class to hold an IRI-Reference. You should not instantiate this directly. Instead use one of the parse_* functions."""
 
     scheme: str | None
     userinfo: str | None
@@ -239,9 +247,9 @@ class IRIReference:
         query: str | None,
         fragment: str | None,
     ):
-        self.scheme = scheme.lower() if scheme else None
-        self.userinfo = _capitalize_percent_encodings(userinfo) if userinfo else None
-        self.host = _capitalize_percent_encodings(host.lower()) if host else None
+        self.scheme = scheme.lower() if scheme is not None else None
+        self.userinfo = _capitalize_percent_encodings(userinfo) if userinfo is not None else None
+        self.host = _capitalize_percent_encodings(host.lower()) if host is not None else None
         if isinstance(port, str):
             self.port = int(port)
         else:
@@ -249,10 +257,10 @@ class IRIReference:
                 raise ValueError("invalid port value")
             self.port = port
         self.path = _capitalize_percent_encodings(path)
-        self.query = _capitalize_percent_encodings(query) if query else None
-        self.fragment = _capitalize_percent_encodings(fragment) if fragment else None
+        self.query = _capitalize_percent_encodings(query) if query is not None else None
+        self.fragment = _capitalize_percent_encodings(fragment) if fragment is not None else None
 
-    def serialize(self) -> str:
+    def serialize(self: Self) -> str:
         """Direct translation of RFC 3986 section 5.3"""
         result: str = ""
         if self.scheme is not None:
@@ -267,7 +275,7 @@ class IRIReference:
         return result
 
     @property
-    def authority(self) -> str | None:
+    def authority(self: Self) -> str | None:
         """userinfo@host:port"""
         if self.host is None:
             return None
@@ -279,8 +287,67 @@ class IRIReference:
             result += ":" + str(self.port)
         return result
 
+    def join(self: Self, r: Self) -> Self:
+        """Implementation of the "Transform References" algorithm from RFC 3986 section 5.2.2"""
+
+        scheme: str | None
+        userinfo: str | None
+        host: str | None
+        port: int | None
+        path: str
+        query: str | None
+        fragment: str | None
+
+        # This is a direct translation of the pseudocode in the RFC.
+        # It could be made prettier, but I'm leaving it like this because
+        # it's easy to check that it's the same as the RFC.
+        if r.scheme is not None:
+            scheme = r.scheme
+            userinfo = r.userinfo
+            host = r.host
+            port = r.port
+            path = _remove_dot_segments(r.path)
+            query = r.query
+        else:
+            if r.authority is not None:
+                userinfo = r.userinfo
+                host = r.host
+                port = r.port
+                path = _remove_dot_segments(r.path)
+                query = r.query
+            else:
+                if len(r.path) == 0:
+                    path = self.path
+                    if r.query is not None:
+                        query = r.query
+                    else:
+                        query = self.query
+                else:
+                    if r.path.startswith("/"):
+                        path = _remove_dot_segments(r.path)
+                    else:
+                        path = _merge_paths(self, r)
+                        path = _remove_dot_segments(path)
+                    query = r.query
+                userinfo = self.userinfo
+                host = self.host
+                port = self.port
+            scheme = self.scheme
+        fragment = r.fragment
+
+        return self.__class__(
+            scheme=scheme,
+            userinfo=userinfo,
+            host=host,
+            port=port,
+            path=path,
+            query=query,
+            fragment=fragment,
+        )
+
+
 def _capitalize_percent_encodings(string: str) -> str:
-    """Returns string with all percent-encoded bytes expressed in capital letters.
+    """Returns string with all percent-encoded sequences expressed in capital letters.
     e.g. _capitalize_percent_encodings("example%2ecom") == "example%2Ecom"
     """
     for m in re.finditer(rf"%(?:[a-f]{_HEXDIG}|{_HEXDIG}[a-f])", string):
@@ -290,6 +357,7 @@ def _capitalize_percent_encodings(string: str) -> str:
             + string[m.end() :]
         )
     return string
+
 
 def parse_uri(uri: str) -> IRIReference:
     """RFC 3986-compliant URI parser.
@@ -422,64 +490,6 @@ def _merge_paths(base: IRIReference, r: IRIReference) -> str:
     dirname, slash, _ = base.path.rpartition("/")
     return dirname + slash + r.path
 
-def join_uri(base: IRIReference, r: IRIReference) -> IRIReference:
-    """Implementation of the "Transform References" algorithm from RFC 3986 section 5.2.2"""
-
-    scheme: str | None
-    userinfo: str | None
-    host: str | None
-    port: int | None
-    path: str
-    query: str | None
-    fragment: str | None
-
-    # This is a direct translation of the pseudocode in the RFC.
-    # It could be made prettier, but I'm leaving it like this because
-    # it's easy to check that it's the same as the RFC.
-    if r.scheme is not None:
-        scheme = r.scheme
-        userinfo = r.userinfo
-        host = r.host
-        port = r.port
-        path = _remove_dot_segments(r.path)
-        query = r.query
-    else:
-        if r.authority is not None:
-            userinfo = r.userinfo
-            host = r.host
-            port = r.port
-            path = _remove_dot_segments(r.path)
-            query = r.query
-        else:
-            if len(r.path) == 0:
-                path = base.path
-                if r.query is not None:
-                    query = r.query
-                else:
-                    query = base.query
-            else:
-                if r.path.startswith("/"):
-                    path = _remove_dot_segments(r.path)
-                else:
-                    path = _merge_paths(base, r)
-                    path = _remove_dot_segments(path)
-                query = r.query
-            userinfo = base.userinfo
-            host = base.host
-            port = base.port
-        scheme = base.scheme
-    fragment = r.fragment
-
-    return IRIReference(
-        scheme=scheme,
-        userinfo=userinfo,
-        host=host,
-        port=port,
-        path=path,
-        query=query,
-        fragment=fragment,
-    )
-
 
 ############################################################################################################
 #------------- Everything below here is crud that we need for compatibility with urllib.parse -------------#
@@ -488,11 +498,11 @@ def join_uri(base: IRIReference, r: IRIReference) -> IRIReference:
 class ParseResult(IRIReference):
     """Deprecated. A subclass of IRIReference with a focus on compatibility with urllib."""
 
-    def __getitem__(self, idx: int) -> str | None:
+    def __getitem__(self: Self, idx: int) -> str | None:
         """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it."""
         return list(self)[idx]
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self: Self) -> Iterator[str]:
         """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it."""
         return iter(
             (
@@ -505,9 +515,9 @@ class ParseResult(IRIReference):
             )
         )
 
-    def __repr__(self) -> str:
+    def __repr__(self: Self) -> str:
         scheme, netloc, path, params, query, fragment = self
-        return f"ParseResult(scheme={repr(scheme)}, netloc={repr(netloc)}, path={repr(path)}, params={repr(params)}, query={repr(query)}, fragment={repr(fragment)})"
+        return f"{self.__class__.__name__}(scheme={repr(scheme)}, netloc={repr(netloc)}, path={repr(path)}, params={repr(params)}, query={repr(query)}, fragment={repr(fragment)})"
 
     @classmethod
     def from_irireference(cls, uriref: IRIReference):
@@ -522,17 +532,17 @@ class ParseResult(IRIReference):
             fragment=uriref.fragment,
         )
 
-    def geturl(self) -> str:
+    def geturl(self: Self) -> str:
         """Returns URL in string form."""
         return self.serialize()
 
     @property
-    def hostname(self) -> str:
+    def hostname(self: Self) -> str:
         """Returns self.host."""
         return self.host if self.host is not None else ""
 
     @property
-    def netloc(self) -> str:
+    def netloc(self: Self) -> str:
         """Returns username@host:port separated by a colon."""
         result: str = ""
         if self.userinfo is not None:
@@ -544,14 +554,14 @@ class ParseResult(IRIReference):
         return result
 
     @property
-    def params(self) -> str:
+    def params(self: Self) -> str:
         """Returns everything after the first semicolon in the last path segment."""
         _, _, last_seg = self.path.rpartition("/")
         _, _, result = last_seg.rpartition(";")
         return result
 
     @property
-    def password(self) -> str | None:
+    def password(self: Self) -> str | None:
         """Returns everything after the first colon in the userinfo."""
         if self.userinfo is not None:
             colon_idx: int = self.userinfo.find(":")
@@ -561,50 +571,52 @@ class ParseResult(IRIReference):
         return None
 
     @property
-    def username(self) -> str:
+    def username(self: Self) -> str:
         """Returns everything before the first colon in the userinfo."""
         if self.userinfo is not None:
             result, _, _ = self.userinfo.partition(":")
             return result
         return ""
 
-    def squish_fragment(self) -> None:
-        """Appends the fragment into the query if there is one, and the path if there isn't."""
-        if self.fragment is None:
-            return
-        if self.query is not None:
-            self.query += self.fragment
-        else:
-            self.path += self.fragment
-        self.fragment = None
+    def _with_squished_fragment(self: Self) -> Self:
+        """Returns a copy of this object, with the fragment appended into either the query if there is one, or the path if there isn't."""
+        result: Self = copy.copy(self)
+        if result.fragment is not None:
+            if result.query is not None:
+                result.query += result.fragment
+            else:
+                result.path += result.fragment
+            result.fragment = None
+        return result
 
 
-def urlparse(url: str, scheme: str = "", allow_fragments: bool = True) -> ParseResult:
+def urlparse(url: str | bytes, scheme: str | bytes | None = None, allow_fragments: bool = True) -> ParseResult:
     """IRI-Reference parser designed to be backwards-compatible with urllib.parse.urlparse."""
-    scheme = re.sub("[\r\n\t]", "", scheme)
-    url = re.sub("[\r\n\t]", "", url)
-    if len(scheme) > 0 and re.match(rf"\A{_SCHEME}\Z", scheme) is None:
-        raise ValueError("failed to parse scheme")
+    if scheme is not None:
+        if isinstance(scheme, bytes):
+            scheme = scheme.decode("latin1")
+        scheme = re.sub("[\r\n\t]", "", scheme)
 
-    result: ParseResult
+    if isinstance(url, bytes):
+        url = url.decode("ascii")
+    url = re.sub("[\r\n\t]", "", url)
+
+    result: ParseResult | None = None
     try:
         result = ParseResult.from_irireference(parse_iri(url))
-        if not allow_fragments:
-            result.squish_fragment()
-        return result
     except ValueError:
         pass
     try:
         rr: IRIReference = parse_irelative_ref(url)
-        if len(scheme) > 0:
+        if scheme is not None:
             rr.scheme = scheme
         result = ParseResult.from_irireference(rr)
-        if not allow_fragments:
-            result.squish_fragment()
-        return result
     except ValueError:
         pass
-    raise ValueError("failed to parse URL")
+    if result is None:
+        raise ValueError("failed to parse URL")
+
+    return result if allow_fragments else result._with_squished_fragment()
 
 def urlunparse(components: Iterable[str]) -> str:
     """Deprecated."""
@@ -625,11 +637,11 @@ def urlunparse(components: Iterable[str]) -> str:
 
 class SplitResult(ParseResult):
     """The return type of urlsplit, which has 5 members instead of ParseResult's 6."""
-    def __getitem__(self, idx: int) -> str | None:
+    def __getitem__(self: Self, idx: int) -> str | None:
         """The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
         return list(self)[idx]
 
-    def __iter__(self) -> Iterator[str]:
+    def __iter__(self: Self) -> Iterator[str]:
         """The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
         return iter(
             (
@@ -641,10 +653,17 @@ class SplitResult(ParseResult):
             )
         )
 
+    def __repr__(self: Self) -> str:
+        scheme, netloc, path, query, fragment = self
+        return f"{self.__class__.__name__}(scheme={repr(scheme)}, netloc={repr(netloc)}, path={repr(path)}, query={repr(query)}, fragment={repr(fragment)})"
 
-def urlsplit(url: str, scheme: str = "", allow_fragments: bool = True) -> SplitResult:
+
+def urlsplit(url: str | bytes, scheme: str | bytes | None = None, allow_fragments: bool = True) -> SplitResult:
     """Deprecated."""
-    return SplitResult.from_irireference(urlparse(url, scheme=scheme, allow_fragments=allow_fragments))
+    try:
+        return SplitResult.from_irireference(urlparse(url, scheme=scheme, allow_fragments=allow_fragments))
+    except ValueError as e:
+        raise ValueError("could not parse URL for splitting") from e
 
 def urlunsplit(components: Iterable[str]) -> str:
     """Deprecated."""
@@ -660,3 +679,8 @@ def urlunsplit(components: Iterable[str]) -> str:
     if len(fragment) > 0:
         result += "#" + fragment
     return result
+
+def urljoin(base: str | bytes, url: str | bytes, allow_fragments: bool = True) -> str | bytes:
+    """Deprecated."""
+    result: str = urlparse(base, allow_fragments=allow_fragments).join(urlparse(url, allow_fragments=allow_fragments)).serialize()
+    return result.encode("ascii") if isinstance(base, bytes) and isinstance(url, bytes) else result
