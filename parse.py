@@ -2,15 +2,22 @@
 urllib.parse is unmaintainable, so this is a clean-slate rewrite of urllib.parse
 I am shooting for compatibility with RFCs 3986 and 3987
 
-Differences from urllib:
-    - Removal of all deprecated components.
+This library differs from urllib.parse in the following ways:
+    - It removes all deprecated components
+    - It no longer applies NFKC normalization before parsing IRIs.
+    - It introduces new APIs that allow you to specify exactly what you want to parse.
+    - It removes the capability to construct SplitResult, ParseResult, DefragResult manually.
+    - urlsplit no longer strips garbage bytes from the beginning and end of the URL.
+    - Hosts are now lowercased.
+    - Paths are normalized when joined.
 """
 
 import copy
 import dataclasses
 import re
 
-from typing import Iterator, Iterable, Self
+from typing import Iterator, Iterable, Self, Callable, Any
+from urllib.parse import clear_cache, parse_qs, parse_qsl, quote, quote_from_bytes, unquote_to_bytes, urlencode, unwrap
 
 # Each of these ABNF rules is from RFC 3986, 3987, 6874, or 5234.
 
@@ -128,7 +135,7 @@ _DEC_OCTET: str = rf"(?:{_DIGIT}|[1-9]{_DIGIT}|1{_DIGIT}{{2}}|2[0-4]{_DIGIT}|25[
 _IPV4ADDRESS: str = rf"{_DEC_OCTET}\.{_DEC_OCTET}\.{_DEC_OCTET}\.{_DEC_OCTET}"
 
 # h16 = 1*4HEXDIG
-_H16: str = r"(?:[0-9A-F]{1,4})"
+_H16: str = rf"(?:{_HEXDIG}{{1,4}})"
 
 # ls32 = ( h16 ":" h16 ) / IPv4address
 _LS32: str = rf"(?:{_H16}:{_H16}|{_IPV4ADDRESS})"
@@ -146,9 +153,9 @@ _IPV6ADDRESS: str = (
     "(?:"
     + r"|".join(
         (
-                                           rf"(?:{_H16}:){{6}}{_LS32}",
-                                         rf"::(?:{_H16}:){{5}}{_LS32}",
-                              rf"(?:{_H16})?::(?:{_H16}:){{4}}{_LS32}",
+            rf"(?:{_H16}:){{6}}{_LS32}",
+            rf"::(?:{_H16}:){{5}}{_LS32}",
+            rf"(?:{_H16})?::(?:{_H16}:){{4}}{_LS32}",
             rf"(?:(?:{_H16}:){{0,1}}{_H16})?::(?:{_H16}:){{3}}{_LS32}",
             rf"(?:(?:{_H16}:){{0,2}}{_H16})?::(?:{_H16}:){{2}}{_LS32}",
             rf"(?:(?:{_H16}:){{0,3}}{_H16})?::(?:{_H16}:){{1}}{_LS32}",
@@ -207,7 +214,9 @@ _IHIER_PART: str = rf"(?://{_IAUTHORITY}{_IPATH_ABEMPTY}|{_IPATH_ABSOLUTE}|{_IPA
 _RELATIVE_PART: str = rf"(?://{_AUTHORITY}{_PATH_ABEMPTY}|{_PATH_ABSOLUTE}|{_PATH_NOSCHEME}|{_PATH_EMPTY})"
 
 # irelative-part = "//" iauthority ipath-abempty / ipath-absolute / ipath-noscheme / ipath-empty
-_IRELATIVE_PART: str = rf"(?://{_IAUTHORITY}{_IPATH_ABEMPTY}|{_IPATH_ABSOLUTE}|{_IPATH_NOSCHEME}|{_IPATH_EMPTY})"
+_IRELATIVE_PART: str = (
+    rf"(?://{_IAUTHORITY}{_IPATH_ABEMPTY}|{_IPATH_ABSOLUTE}|{_IPATH_NOSCHEME}|{_IPATH_EMPTY})"
+)
 
 # URI = scheme ":" hier-part [ "?" query ] [ "#" fragment ]
 _URI: str = rf"\A{_SCHEME}:{_HIER_PART}(?:\?{_QUERY})?(?:#{_FRAGMENT})?\Z"
@@ -225,124 +234,147 @@ _RELATIVE_REF_PAT: re.Pattern[str] = re.compile(_RELATIVE_REF)
 _IRELATIVE_REF: str = rf"\A{_IRELATIVE_PART}(?:\?{_IQUERY})?(?:#{_IFRAGMENT})?\Z"
 _IRELATIVE_REF_PAT: re.Pattern[str] = re.compile(_IRELATIVE_REF)
 
+
 @dataclasses.dataclass
-class IRIReference:
+class NURL:
     """A class to hold an IRI-Reference. You should not instantiate this directly. Instead use one of the parse_* functions."""
 
-    scheme: str | None
-    userinfo: str | None
-    host: str | None
-    port: int | None
-    path: str
-    query: str | None
-    fragment: str | None
+    _raw_scheme: str | None
+    _raw_userinfo: str | None
+    _raw_host: str | None
+    _raw_port: str | None
+    _raw_path: str
+    _raw_query: str | None
+    _raw_fragment: str | None
 
-    def __init__(
-        self,
-        scheme: str | None,
-        userinfo: str | None,
-        host: str | None,
-        port: str | int | None,
-        path: str,
-        query: str | None,
-        fragment: str | None,
-    ):
-        self.scheme = scheme.lower() if scheme is not None else None
-        self.userinfo = _capitalize_percent_encodings(userinfo) if userinfo is not None else None
-        self.host = _capitalize_percent_encodings(host.lower()) if host is not None else None
-        if isinstance(port, str):
-            self.port = int(port)
-        else:
-            if isinstance(port, int) and port < 0:
-                raise ValueError("invalid port value")
-            self.port = port
-        self.path = _capitalize_percent_encodings(path)
-        self.query = _capitalize_percent_encodings(query) if query is not None else None
-        self.fragment = _capitalize_percent_encodings(fragment) if fragment is not None else None
+    @property
+    def scheme(self: Self):  # Not typed for back-compat
+        return self._raw_scheme
+
+    @property
+    def userinfo(self: Self) -> str | None:
+        return self._raw_userinfo
+
+    @property
+    def host(self: Self) -> str | None:
+        return self._raw_host
+
+    @property
+    def port(self: Self) -> int | None:
+        if self._raw_port is not None and len(self._raw_port) > 0:
+            return int(self._raw_port, base=10)
+        return None
+
+    @property
+    def path(self: Self):  # Not typed for back-compat
+        return self._raw_path
+
+    @property
+    def query(self: Self):  # Not typed for back-compat
+        return self._raw_query
+
+    @property
+    def fragment(self: Self):  # Not typed for back-compat
+        return self._raw_fragment
 
     def serialize(self: Self) -> str:
         """Direct translation of RFC 3986 section 5.3"""
         result: str = ""
-        if self.scheme is not None:
-            result += self.scheme + ":"
+        if self._raw_scheme is not None:
+            result += self._raw_scheme + ":"
         if self.authority is not None:
             result += "//" + self.authority
-        result += self.path
-        if self.query is not None:
-            result += "?" + self.query
-        if self.fragment is not None:
-            result += "#" + self.fragment
+        result += self._raw_path
+        if self._raw_query is not None:
+            result += "?" + self._raw_query
+        if self._raw_fragment is not None:
+            result += "#" + self._raw_fragment
         return result
 
     @property
     def authority(self: Self) -> str | None:
         """userinfo@host:port"""
-        if self.host is None:
+        if self._raw_host is None:
             return None
         result: str = ""
-        if self.userinfo is not None:
-            result += self.userinfo + "@"
-        result += self.host
-        if self.port is not None:
-            result += ":" + str(self.port)
+        if self._raw_userinfo is not None:
+            result += self._raw_userinfo + "@"
+        result += self._raw_host
+        if self._raw_port is not None:
+            result += ":" + self._raw_port
         return result
 
-    def join(self: Self, r: Self) -> Self:
+    @classmethod
+    def _from_nurl(cls, nurl) -> Self:
+        return cls(
+            _raw_scheme=nurl._raw_scheme,
+            _raw_userinfo=nurl._raw_userinfo,
+            _raw_host=nurl._raw_host,
+            _raw_port=nurl._raw_port,
+            _raw_path=nurl._raw_path,
+            _raw_query=nurl._raw_query,
+            _raw_fragment=nurl._raw_fragment,
+        )
+
+    def join(self: Self, r: Self, strict: bool = True) -> Self:
         """Implementation of the "Transform References" algorithm from RFC 3986 section 5.2.2"""
 
         scheme: str | None
         userinfo: str | None
         host: str | None
-        port: int | None
+        port: str | None
         path: str
         query: str | None
         fragment: str | None
 
         # This is a direct translation of the pseudocode in the RFC.
         # It could be made prettier, but I'm leaving it like this because
-        # it's easy to check that it's the same as the RFC.
-        if r.scheme is not None:
-            scheme = r.scheme
-            userinfo = r.userinfo
-            host = r.host
-            port = r.port
-            path = _remove_dot_segments(r.path)
-            query = r.query
+        # it's easy to check against the RFC.
+        r_scheme: str | None = r._raw_scheme
+        if not strict and r._raw_scheme == self._raw_scheme:
+            r_scheme = None
+        if r_scheme is not None:
+            scheme = r_scheme
+            userinfo = r._raw_userinfo
+            host = r._raw_host
+            port = r._raw_port
+            path = _remove_dot_segments(r._raw_path)
+            query = r._raw_query
         else:
             if r.authority is not None:
-                userinfo = r.userinfo
-                host = r.host
-                port = r.port
-                path = _remove_dot_segments(r.path)
-                query = r.query
+                userinfo = r._raw_userinfo
+                host = r._raw_host
+                port = r._raw_port
+                path = _remove_dot_segments(r._raw_path)
+                query = r._raw_query
             else:
-                if len(r.path) == 0:
-                    path = self.path
-                    if r.query is not None:
-                        query = r.query
+                if len(r._raw_path) == 0:
+                    path = self._raw_path
+                    if r._raw_query is not None:
+                        query = r._raw_query
                     else:
-                        query = self.query
+                        query = self._raw_query
                 else:
-                    if r.path.startswith("/"):
-                        path = _remove_dot_segments(r.path)
+                    if r._raw_path.startswith("/"):
+                        path = _remove_dot_segments(r._raw_path)
                     else:
                         path = _merge_paths(self, r)
                         path = _remove_dot_segments(path)
-                    query = r.query
-                userinfo = self.userinfo
-                host = self.host
-                port = self.port
-            scheme = self.scheme
-        fragment = r.fragment
+                    query = r._raw_query
+                userinfo = self._raw_userinfo
+                host = self._raw_host
+                port = self._raw_port
+            scheme = self._raw_scheme
+        fragment = r._raw_fragment
 
         return self.__class__(
-            scheme=scheme,
-            userinfo=userinfo,
-            host=host,
-            port=port,
-            path=path,
-            query=query,
-            fragment=fragment,
+            _raw_scheme=scheme,
+            _raw_userinfo=userinfo,
+            _raw_host=host,
+            _raw_port=port,
+            _raw_path=path,
+            _raw_query=query,
+            _raw_fragment=fragment,
         )
 
 
@@ -351,114 +383,118 @@ def _capitalize_percent_encodings(string: str) -> str:
     e.g. _capitalize_percent_encodings("example%2ecom") == "example%2Ecom"
     """
     for m in re.finditer(rf"%(?:[a-f]{_HEXDIG}|{_HEXDIG}[a-f])", string):
-        string = (
-            string[: m.start()]
-            + string[m.start() : m.end()].upper()
-            + string[m.end() :]
-        )
+        string = string[: m.start()] + string[m.start() : m.end()].upper() + string[m.end() :]
     return string
 
 
-def parse_uri(uri: str) -> IRIReference:
+def _parse(data: str, pattern: re.Pattern[str] | str, path_kinds: Iterable[str]) -> NURL:
+    m: re.Match[str] | None = re.match(pattern, data)
+    if m is None:
+        raise ValueError("parse failed")
+
+    # Because relative references don't have a scheme group in their regexes,
+    # this requires an extra check.
+    scheme: str | None = m["scheme"] if "scheme" in m.groupdict() else None
+    if scheme is not None:
+        scheme = scheme.lower()
+
+    userinfo: str | None = m["userinfo"]
+    if userinfo is not None:
+        userinfo = _capitalize_percent_encodings(userinfo)
+
+    host: str | None = m["host"]
+    if host is not None:
+        if host.isascii():
+            host = host.lower()
+        host = _capitalize_percent_encodings(host)
+
+    port: str | None = m["port"]
+    if port:
+        # Get rid of leading 0s.
+        port = str(int(port))
+
+    query: str | None = m["query"]
+    if query is not None:
+        query = _capitalize_percent_encodings(query)
+
+    fragment: str | None = m["fragment"]
+    if fragment is not None:
+        fragment = _capitalize_percent_encodings(fragment)
+
+    return NURL(
+        _raw_scheme=scheme,
+        _raw_userinfo=userinfo,
+        _raw_host=host,
+        _raw_port=port,
+        _raw_path=_capitalize_percent_encodings(m[next(pk for pk in path_kinds if m[pk] is not None)]),
+        _raw_query=query,
+        _raw_fragment=fragment,
+    )
+
+
+_URI_PATH_KINDS: tuple[str, ...] = ("path_abempty", "path_absolute", "path_empty", "path_rootless")
+
+
+def parse_uri(data: str) -> NURL:
     """RFC 3986-compliant URI parser.
     If you want to parse a URL that contains only ASCII characters (e.g. "http://example.org/path?query#fragment"), this is the function to use.
     """
-    m: re.Match[str] | None = re.match(_URI_PAT, uri)
-    if m is None:
-        raise ValueError("failed to parse URI")
-    return IRIReference(
-        scheme=m["scheme"],
-        userinfo=m["userinfo"],
-        host=m["host"],
-        port=m["port"],
-        path=m[next(path_kind for path_kind in ("path_abempty", "path_absolute", "path_empty", "path_rootless") if m[path_kind] is not None)],
-        query=m["query"],
-        fragment=m["fragment"],
-    )
+    return _parse(data, _URI_PAT, _URI_PATH_KINDS)
 
 
-def parse_iri(iri: str) -> IRIReference:
+def parse_iri(data: str) -> NURL:
     """RFC 3987-compliant IRI parser.
-    If you want to parse a URL that contains non-ACII characters (e.g. "https://en.wiktionary.org/wiki/Ῥόδος?query#fragment"), this is the function to use.
+    If you want to parse a URL that contains non-ASCII characters (e.g. "https://en.wiktionary.org/wiki/Ῥόδος?query#fragment"), this is the function to use.
     """
-    m: re.Match[str] | None = re.match(_IRI_PAT, iri)
-    if m is None:
-        raise ValueError("failed to parse IRI")
-    return IRIReference(
-        scheme=m["scheme"],
-        userinfo=m["userinfo"],
-        host=m["host"],
-        port=m["port"],
-        path=m[next(path_kind for path_kind in ("path_abempty", "path_absolute", "path_empty", "path_rootless") if m[path_kind] is not None)],
-        query=m["query"],
-        fragment=m["fragment"],
-    )
+    return _parse(data, _IRI_PAT, _URI_PATH_KINDS)
 
 
-def parse_relative_ref(url: str) -> IRIReference:
+_RELATIVE_REF_PATH_KINDS: tuple[str, ...] = ("path_abempty", "path_absolute", "path_empty", "path_noscheme")
+
+
+def parse_relative_ref(data: str) -> NURL:
     """RFC 3986-compliant relative-ref parser.
     If you want to parse a relative reference that contains only ASCII characters (e.g. "//example.org/path?query#fragment"), this is the function to use.
     """
-    m: re.Match[str] | None = re.match(_RELATIVE_REF_PAT, url)
-    if m is None:
-        raise ValueError("failed to parse relative-ref")
-    return IRIReference(
-        scheme=None,
-        userinfo=m["userinfo"],
-        host=m["host"],
-        port=m["port"],
-        path=m[next(path_kind for path_kind in ("path_abempty", "path_absolute", "path_empty", "path_noscheme") if m[path_kind] is not None)],
-        query=m["query"],
-        fragment=m["fragment"],
-    )
+    return _parse(data, _RELATIVE_REF_PAT, _RELATIVE_REF_PATH_KINDS)
 
 
-def parse_irelative_ref(irelative_ref: str) -> IRIReference:
+def parse_irelative_ref(data: str) -> NURL:
     """RFC 3987-compliant irelative-ref parser.
-    If you want to parse a relative reference that contains non-ACII characters (e.g. "//en.wiktionary.org/wiki/Ῥόδος?query#fragment"), this is the function to use.
+    If you want to parse a relative reference that contains non-ASCII characters (e.g. "//en.wiktionary.org/wiki/Ῥόδος?query#fragment"), this is the function to use.
     """
-    m: re.Match[str] | None = re.match(_IRELATIVE_REF_PAT, irelative_ref)
-    if m is None:
-        raise ValueError("failed to parse irelative-ref")
-    return IRIReference(
-        scheme=None,
-        userinfo=m["userinfo"],
-        host=m["host"],
-        port=m["port"],
-        path=m[next(path_kind for path_kind in ("path_abempty", "path_absolute", "path_empty", "path_noscheme") if m[path_kind] is not None)],
-        query=m["query"],
-        fragment=m["fragment"],
-    )
+    return _parse(data, _IRELATIVE_REF_PAT, _RELATIVE_REF_PATH_KINDS)
 
 
-def parse_uri_reference(uri_reference: str) -> IRIReference:
+def parse_uri_reference(data: str) -> NURL:
     """RFC 3986-compliant URI-Reference parser.
     Only use this when you don't know whether you want to parse a URI or a relative-ref.
     """
     try:
-        return parse_uri(uri_reference)
+        return parse_uri(data)
     except ValueError:
         pass
     try:
-        return parse_relative_ref(uri_reference)
+        return parse_relative_ref(data)
     except ValueError:
         pass
     raise ValueError("failed to parse URI-Reference")
 
 
-def parse_iri_reference(iri_reference: str) -> IRIReference:
+def parse_iri_reference(data: str) -> NURL:
     """RFC 3987-compliant IRI-Reference parser.
-    Only use this when you don't know whether you want to parse a IRI or an irelative-ref.
+    Only use this when you don't know whether you want to parse an IRI or an irelative-ref.
     """
     try:
-        return parse_iri(iri_reference)
+        return parse_iri(data)
     except ValueError:
         pass
     try:
-        return parse_irelative_ref(iri_reference)
+        return parse_irelative_ref(data)
     except ValueError:
         pass
     raise ValueError("failed to parse IRI-Reference")
+
 
 def _remove_dot_segments(path: str) -> str:
     """Implementation of the "remove_dot_segments" routine from RFC 3986 section 5.2.4"""
@@ -467,9 +503,9 @@ def _remove_dot_segments(path: str) -> str:
         if path.startswith("./") or path.startswith("../"):
             _, _, path = path.partition("/")
         elif path.startswith("/./") or path == "/.":
-            path = "/" + path[len("/./"):]
+            path = "/" + path[len("/./") :]
         elif path.startswith("/../") or path == "/..":
-            path = "/" + path[len("/../"):]
+            path = "/" + path[len("/../") :]
             result, _, _ = result.rpartition("/")
         elif path in (".", ".."):
             path = ""
@@ -483,144 +519,378 @@ def _remove_dot_segments(path: str) -> str:
     return result
 
 
-def _merge_paths(base: IRIReference, r: IRIReference) -> str:
+def _merge_paths(base: NURL, r: NURL) -> str:
     """Implementation of the "merge" routine defined in RFC 3986 section 5.2.3"""
-    if base.host is not None and len(base.path) == 0:
-        return "/" + r.path
-    dirname, slash, _ = base.path.rpartition("/")
-    return dirname + slash + r.path
+    if base._raw_host is not None and len(base._raw_path) == 0:
+        return "/" + r._raw_path
+    dirname, slash, _ = base._raw_path.rpartition("/")
+    return dirname + slash + r._raw_path
 
 
 ############################################################################################################
-#------------- Everything below here is crud that we need for compatibility with urllib.parse -------------#
+# ------------- Everything below here is crud that we need for compatibility with urllib.parse -------------#
 ############################################################################################################
 
-class ParseResult(IRIReference):
-    """Deprecated. A subclass of IRIReference with a focus on compatibility with urllib."""
 
-    def __getitem__(self: Self, idx: int) -> str | None:
-        """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it."""
-        return list(self)[idx]
+_DEFAULT_ENCODING: str = "ascii"
+
+
+def _squish_fragment(ref: NURL) -> NURL:
+    result: NURL = copy.copy(ref)
+    if result._raw_fragment is not None:
+        if result._raw_query is not None:
+            result._raw_query += "#" + result._raw_fragment
+            result._raw_fragment = None
+        else:
+            result._raw_path += "#" + result._raw_fragment
+            result._raw_fragment = None
+    return result
+
+
+def _remove_fragment(ref: NURL) -> NURL:
+    result: NURL = copy.copy(ref)
+    result._raw_fragment = None
+    return result
+
+
+class Result(NURL):
+    def __init__(self: Self, fields: Iterable[str], *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._fields: tuple[str, ...] = tuple(fields)
+
+    def __len__(self: Self) -> int:
+        return len(self._fields)
 
     def __iter__(self: Self) -> Iterator[str]:
-        """urllib compatibility function. The old ParseResult was a namedtuple, so this is here to maintain compatibility with it."""
-        return iter(
-            (
-                self.scheme if self.scheme else "",
-                self.netloc if self.netloc else "",
-                self.path if self.path else "",
-                self.params if self.params else "",
-                self.query if self.query else "",
-                self.fragment if self.fragment else "",
-            )
-        )
+        return iter(map(lambda field: getattr(self, field), self._fields))
 
     def __repr__(self: Self) -> str:
-        scheme, netloc, path, params, query, fragment = self
-        return f"{self.__class__.__name__}(scheme={repr(scheme)}, netloc={repr(netloc)}, path={repr(path)}, params={repr(params)}, query={repr(query)}, fragment={repr(fragment)})"
+        return f"{self.__class__.__name__}({', '.join(field + '=' + repr(value) for field, value in zip(self._fields, self))})"
 
-    @classmethod
-    def from_irireference(cls, uriref: IRIReference):
-        """Constructs a ParseResult (or child class) from a IRIReference"""
-        return cls(
-            scheme=uriref.scheme,
-            userinfo=uriref.userinfo,
-            host=uriref.host,
-            port=uriref.port,
-            path=uriref.path,
-            query=uriref.query,
-            fragment=uriref.fragment,
-        )
+    def __eq__(self: Self, other) -> bool:
+        return tuple(self) == tuple(other)
 
-    def geturl(self: Self) -> str:
-        """Returns URL in string form."""
+    @property
+    def username(self: Self):
+        if self.userinfo is None:
+            return None
+        return self.userinfo.partition(":")[0]
+
+    @property
+    def password(self: Self):
+        if self.userinfo is None:
+            return None
+        _, colon, password = self.userinfo.partition(":")
+        if len(colon) == 0:
+            return None
+        return password
+
+    @property
+    def hostname(self: Self):
+        if self.host is None:
+            return None
+        if self.host.startswith("["):
+            return self.host[1:-1]
+        return self.host
+
+    @property
+    def query(self: Self):
+        return self._raw_query if self._raw_query is not None else ""
+
+    @property
+    def fragment(self: Self):
+        return self._raw_fragment if self._raw_fragment is not None else ""
+
+    @property
+    def netloc(self: Self):
+        return self.authority if self.authority is not None else ""
+
+    @property
+    def scheme(self: Self):
+        return self._raw_scheme if self._raw_scheme is not None else ""
+
+    def geturl(self: Self):
         return self.serialize()
 
-    @property
-    def hostname(self: Self) -> str:
-        """Returns self.host."""
-        return self.host if self.host is not None else ""
+
+def _encode_if_not_none(s: str, encoding: str) -> bytes | None:
+    if s is None:
+        return None
+    return s.encode(encoding)
+
+
+class ResultBytes(Result):
+    def __init__(self: Self, fields: Iterable[str], encoding: str, *args, **kwargs) -> None:
+        super().__init__(fields, *args, **kwargs)
+        self._encoding = encoding
+
+    def geturl(self: Self) -> bytes:
+        return super().geturl().encode(self._encoding)
 
     @property
-    def netloc(self: Self) -> str:
-        """Returns username@host:port separated by a colon."""
+    def scheme(self: Self) -> bytes:
+        return super().scheme.encode(self._encoding)
+
+    @property
+    def netloc(self: Self) -> bytes:
+        return super().netloc.encode(self._encoding)
+
+    @property
+    def fragment(self: Self) -> bytes:
+        return super().fragment.encode(self._encoding)
+
+    @property
+    def query(self: Self) -> bytes:
+        return super().query.encode(self._encoding)
+
+    @property
+    def hostname(self: Self) -> bytes | None:
+        return _encode_if_not_none(super().hostname, self._encoding)
+
+    @property
+    def username(self: Self) -> bytes | None:
+        return _encode_if_not_none(super().username, self._encoding)
+
+    @property
+    def password(self: Self) -> bytes | None:
+        return _encode_if_not_none(super().password, self._encoding)
+
+    @property
+    def path(self: Self) -> bytes:
+        return super().path.encode(self._encoding)
+
+
+class SplitResultBytes(ResultBytes):
+    _fields: tuple[str] = ("scheme", "netloc", "path", "query", "fragment")
+
+    def __init__(self: Self, encoding: str, *args, **kwargs) -> None:
+        super().__init__(SplitResultBytes._fields, encoding, *args, **kwargs)
+
+
+class SplitResult(Result):
+    _fields: tuple[str] = SplitResultBytes._fields
+
+    def __init__(self: Self, *args, **kwargs) -> None:
+        super().__init__(SplitResult._fields, *args, **kwargs)
+
+    def encode(self: Self, encoding: str) -> SplitResultBytes:
+        return SplitResultBytes(
+            encoding,
+            self._raw_scheme,
+            self._raw_userinfo,
+            self._raw_host,
+            self._raw_port,
+            self._raw_path,
+            self._raw_query,
+            self._raw_fragment,
+        )
+
+
+class DefragResultBytes(ResultBytes):
+    _fields: tuple[str] = ("url", "fragment")
+
+    def __init__(self: Self, encoding: str, *args, **kwargs) -> None:
+        super().__init__(DefragResultBytes._fields, encoding, *args, **kwargs)
+
+    @property
+    def url(self: Self) -> bytes:
+        if self._raw_fragment is None:
+            return self.geturl()
+        else:
+            return self.geturl()[:-len("#" + self._raw_fragment)]
+
+
+class DefragResult(Result):
+    _fields: tuple[str] = DefragResultBytes._fields
+
+    def __init__(self: Self, *args, **kwargs) -> None:
+        super().__init__(DefragResult._fields, *args, **kwargs)
+
+    @property
+    def url(self: Self) -> str:
+        if self._raw_fragment is None:
+            return self.geturl()
+        else:
+            return self.geturl()[:-len("#" + self._raw_fragment)]
+
+    def encode(self: Self, encoding: str) -> DefragResultBytes:
+        return DefragResultBytes(
+            encoding,
+            self._raw_scheme,
+            self._raw_userinfo,
+            self._raw_host,
+            self._raw_port,
+            self._raw_path,
+            self._raw_query,
+            self._raw_fragment,
+        )
+
+
+def _extract_params(path: str) -> str | None:
+    last_seg: str = path.rpartition("/")[2]
+    _, semicolon, params = last_seg.partition(";")
+    if len(semicolon) == 0:
+        return None
+    return params
+
+
+class ParseResultBytes(ResultBytes):
+    _fields: tuple[str] = ("scheme", "netloc", "path", "params", "query", "fragment")
+
+    def __init__(self: Self, encoding: str, *args, **kwargs) -> None:
+        super().__init__(
+            ParseResultBytes._fields, encoding, *args, **kwargs
+        )
+        self._raw_params: str | None = _extract_params(self._raw_path)
+
+    @property
+    def params(self: Self) -> bytes:
+        return self._raw_params.encode(self._encoding) if self._raw_params is not None else b""
+
+    @property
+    def path(self: Self) -> bytes:
+        return (
+            self._raw_path[: -len(";" + self._raw_params)] if self._raw_params is not None else self._raw_path
+        ).encode(self._encoding)
+
+    def geturl(self: Self) -> bytes:
+        """Translation of RFC 3986 section 5.3 with added params support"""
         result: str = ""
-        if self.userinfo is not None:
-            result += self.userinfo + "@"
-        if self.host is not None:
-            result += self.host
-        if self.port is not None:
-            result += ":" + str(self.port)
-        return result
+        if self._raw_scheme is not None:
+            result += self._raw_scheme + ":"
+        if self.authority is not None:
+            result += "//" + self.authority
+        result += self.path.decode(self._encoding)
+        if self._raw_params is not None:
+            result += ";" + self._raw_params
+        if self._raw_query is not None:
+            result += "?" + self._raw_query
+        if self._raw_fragment is not None:
+            result += "#" + self._raw_fragment
+        return result.encode(self._encoding)
+
+
+class ParseResult(Result):
+    _fields: tuple[str] = ParseResultBytes._fields
+
+    def __init__(self: Self, *args, **kwargs) -> None:
+        super().__init__(ParseResult._fields, *args, **kwargs)
+        self._raw_params: str | None = _extract_params(self._raw_path)
 
     @property
     def params(self: Self) -> str:
-        """Returns everything after the first semicolon in the last path segment."""
-        _, _, last_seg = self.path.rpartition("/")
-        _, _, result = last_seg.rpartition(";")
-        return result
+        return self._raw_params if self._raw_params is not None else ""
 
     @property
-    def password(self: Self) -> str | None:
-        """Returns everything after the first colon in the userinfo."""
-        if self.userinfo is not None:
-            colon_idx: int = self.userinfo.find(":")
-            if colon_idx == -1:
-                return None
-            return self.userinfo[colon_idx + 1 :]
-        return None
+    def path(self: Self) -> str:
+        if self._raw_params is not None:
+            return self._raw_path[: -len(";" + self._raw_params)]
+        return self._raw_path
 
-    @property
-    def username(self: Self) -> str:
-        """Returns everything before the first colon in the userinfo."""
-        if self.userinfo is not None:
-            result, _, _ = self.userinfo.partition(":")
-            return result
-        return ""
-
-    def _with_squished_fragment(self: Self) -> Self:
-        """Returns a copy of this object, with the fragment appended into either the query if there is one, or the path if there isn't."""
-        result: Self = copy.copy(self)
-        if result.fragment is not None:
-            if result.query is not None:
-                result.query += result.fragment
-            else:
-                result.path += result.fragment
-            result.fragment = None
+    def geturl(self: Any) -> str:
+        """Translation of RFC 3986 section 5.3 with added params support"""
+        result: str = ""
+        if self._raw_scheme is not None:
+            result += self._raw_scheme + ":"
+        if self.authority is not None:
+            result += "//" + self.authority
+        result += self.path
+        if self._raw_params is not None:
+            result += ";" + self._raw_params
+        if self._raw_query is not None:
+            result += "?" + self._raw_query
+        if self._raw_fragment is not None:
+            result += "#" + self._raw_fragment
         return result
 
+    def encode(self: Self, encoding: str) -> ParseResultBytes:
+        return ParseResultBytes(
+            encoding,
+            self._raw_scheme,
+            self._raw_userinfo,
+            self._raw_host,
+            self._raw_port,
+            self._raw_path,
+            self._raw_query,
+            self._raw_fragment,
+        )
 
-def urlparse(url: str | bytes, scheme: str | bytes | None = None, allow_fragments: bool = True) -> ParseResult:
-    """IRI-Reference parser designed to be backwards-compatible with urllib.parse.urlparse."""
+
+def _nurlparse(url: str | bytes, scheme: str | bytes | None = None, allow_fragments: bool = True) -> NURL:
     if scheme is not None:
+        if (isinstance(scheme, bytes) and not isinstance(url, bytes)) or (isinstance(scheme, str) and not isinstance(url, str)):
+            raise TypeError("Cannot mix str and bytes")
         if isinstance(scheme, bytes):
-            scheme = scheme.decode("latin1")
-        scheme = re.sub("[\r\n\t]", "", scheme)
+            scheme = scheme.decode(_DEFAULT_ENCODING)
 
+        scheme = re.sub(r"[\r\n\t]", "", scheme)
+        if len(scheme) == 0:  # For compatibility with the old default value of scheme=""
+            scheme = None
+        elif not re.fullmatch(_SCHEME, scheme):
+            raise ValueError("Invalid scheme")
+
+    is_bytes: bool = False
     if isinstance(url, bytes):
-        url = url.decode("ascii")
-    url = re.sub("[\r\n\t]", "", url)
+        is_bytes = True
+        url = url.decode(_DEFAULT_ENCODING)
+    url = re.sub(r"[\r\n\t]", "", url)
 
-    result: ParseResult | None = None
+    is_ascii: bool = url.isascii()
+    url_parser: Callable[[str], NURL] = parse_uri if is_ascii else parse_iri
+    ref_parser: Callable[[str], NURL] = parse_relative_ref if is_ascii else parse_irelative_ref
+
+    result: NURL | None = None
     try:
-        result = ParseResult.from_irireference(parse_iri(url))
+        result = url_parser(url)
     except ValueError:
         pass
     try:
-        rr: IRIReference = parse_irelative_ref(url)
+        result = ref_parser(url)
         if scheme is not None:
-            rr.scheme = scheme
-        result = ParseResult.from_irireference(rr)
+            result._raw_scheme = scheme
     except ValueError:
         pass
+
     if result is None:
         raise ValueError("failed to parse URL")
 
-    return result if allow_fragments else result._with_squished_fragment()
+    if not allow_fragments:
+        result = _squish_fragment(result)
 
-def urlunparse(components: Iterable[str]) -> str:
-    """Deprecated."""
-    scheme, authority, path, params, query, fragment = components
+    return result
+
+
+def urlparse(
+    url: str | bytes, scheme: str | bytes | None = None, allow_fragments: bool = True
+) -> ParseResult | ParseResultBytes:
+    """IRI-Reference parser designed to be backwards-compatible with urllib.parse.urlparse."""
+    if scheme == "":
+        scheme = None
+    is_bytes: bool = isinstance(url, bytes)
+    result: ParseResult = ParseResult._from_nurl(
+        _nurlparse(url, scheme=scheme, allow_fragments=allow_fragments)
+    )
+    return result.encode(_DEFAULT_ENCODING) if is_bytes else result
+
+
+def urlsplit(
+    url: str | bytes, scheme: str | bytes | None = None, allow_fragments: bool = True
+) -> SplitResult | SplitResultBytes:
+    if scheme == "":
+        scheme = None
+    is_bytes: bool = isinstance(url, bytes)
+    result: SplitResult = SplitResult._from_nurl(_nurlparse(url, scheme=scheme, allow_fragments=allow_fragments))
+    return result.encode(_DEFAULT_ENCODING) if is_bytes else result
+
+
+def urlunparse(components: Iterable[str] | Iterable[bytes]) -> str | bytes:
+    components = tuple(components)
+    is_bytes: bool = isinstance(components[0], bytes)
+    if not any(all(isinstance(c, t) for c in components) for t in (str, bytes)):
+        raise TypeError("Cannot mix str and bytes")
+    scheme, authority, path, params, query, fragment = (
+        c.decode(_DEFAULT_ENCODING) if isinstance(c, bytes) else c for c in components
+    )
     result: str = ""
     if len(scheme) > 0:
         result += scheme + ":"
@@ -633,41 +903,17 @@ def urlunparse(components: Iterable[str]) -> str:
         result += "?" + query
     if len(fragment) > 0:
         result += "#" + fragment
-    return result
-
-class SplitResult(ParseResult):
-    """The return type of urlsplit, which has 5 members instead of ParseResult's 6."""
-    def __getitem__(self: Self, idx: int) -> str | None:
-        """The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
-        return list(self)[idx]
-
-    def __iter__(self: Self) -> Iterator[str]:
-        """The old SplitResult was a namedtuple, so this is here to maintain compatibility with it."""
-        return iter(
-            (
-                self.scheme if self.scheme else "",
-                self.netloc if self.netloc else "",
-                self.path if self.path else "",
-                self.query if self.query else "",
-                self.fragment if self.fragment else "",
-            )
-        )
-
-    def __repr__(self: Self) -> str:
-        scheme, netloc, path, query, fragment = self
-        return f"{self.__class__.__name__}(scheme={repr(scheme)}, netloc={repr(netloc)}, path={repr(path)}, query={repr(query)}, fragment={repr(fragment)})"
+    return result.encode(_DEFAULT_ENCODING) if is_bytes else result
 
 
-def urlsplit(url: str | bytes, scheme: str | bytes | None = None, allow_fragments: bool = True) -> SplitResult:
-    """Deprecated."""
-    try:
-        return SplitResult.from_irireference(urlparse(url, scheme=scheme, allow_fragments=allow_fragments))
-    except ValueError as e:
-        raise ValueError("could not parse URL for splitting") from e
-
-def urlunsplit(components: Iterable[str]) -> str:
-    """Deprecated."""
-    scheme, authority, path, query, fragment = components
+def urlunsplit(components: Iterable[str] | Iterable[bytes]) -> str | bytes:
+    components = tuple(components)
+    is_bytes: bool = isinstance(components[0], bytes)
+    if not any(all(isinstance(c, t) for c in components) for t in (str, bytes)):
+        raise TypeError("Cannot mix str and bytes")
+    scheme, authority, path, query, fragment = (
+        c.decode(_DEFAULT_ENCODING) if isinstance(c, bytes) else c for c in components
+    )
     result: str = ""
     if len(scheme) > 0:
         result += scheme + ":"
@@ -678,9 +924,20 @@ def urlunsplit(components: Iterable[str]) -> str:
         result += "?" + query
     if len(fragment) > 0:
         result += "#" + fragment
-    return result
+    return result.encode(_DEFAULT_ENCODING) if is_bytes else result
+
 
 def urljoin(base: str | bytes, url: str | bytes, allow_fragments: bool = True) -> str | bytes:
-    """Deprecated."""
-    result: str = urlparse(base, allow_fragments=allow_fragments).join(urlparse(url, allow_fragments=allow_fragments)).serialize()
-    return result.encode("ascii") if isinstance(base, bytes) and isinstance(url, bytes) else result
+    if (isinstance(base, bytes) and not isinstance(url, bytes)) or (isinstance(base, str) and not isinstance(url, str)):
+        raise TypeError("Cannot mix str and bytes")
+    result: str = (
+        _nurlparse(base, allow_fragments=allow_fragments)
+        .join(_nurlparse(url, allow_fragments=allow_fragments), strict=False)
+        .serialize()
+    )
+    return result.encode(_DEFAULT_ENCODING) if isinstance(base, bytes) else result
+
+def urldefrag(url: str | bytes) -> DefragResult | DefragResultBytes:
+    is_bytes: bool = isinstance(url, bytes)
+    result: DefragResult = DefragResult._from_nurl(_nurlparse(url))
+    return result.encode(_DEFAULT_ENCODING) if is_bytes else result
