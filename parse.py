@@ -16,8 +16,7 @@ import copy
 import dataclasses
 import re
 
-from typing import Iterator, Iterable, Self, Callable, Any
-from urllib.parse import clear_cache, parse_qs, parse_qsl, quote, quote_from_bytes, unquote_to_bytes, urlencode, unwrap
+from typing import Iterator, Iterable, Self, Callable, Any, Sequence
 
 # Each of these ABNF rules is from RFC 3986, 3987, 6874, or 5234.
 
@@ -661,14 +660,14 @@ class ResultBytes(Result):
 
 
 class SplitResultBytes(ResultBytes):
-    _fields: tuple[str] = ("scheme", "netloc", "path", "query", "fragment")
+    _fields: tuple[str, ...] = ("scheme", "netloc", "path", "query", "fragment")
 
     def __init__(self: Self, encoding: str, *args, **kwargs) -> None:
         super().__init__(SplitResultBytes._fields, encoding, *args, **kwargs)
 
 
 class SplitResult(Result):
-    _fields: tuple[str] = SplitResultBytes._fields
+    _fields: tuple[str, ...] = SplitResultBytes._fields
 
     def __init__(self: Self, *args, **kwargs) -> None:
         super().__init__(SplitResult._fields, *args, **kwargs)
@@ -687,7 +686,7 @@ class SplitResult(Result):
 
 
 class DefragResultBytes(ResultBytes):
-    _fields: tuple[str] = ("url", "fragment")
+    _fields: tuple[str, ...] = ("url", "fragment")
 
     def __init__(self: Self, encoding: str, *args, **kwargs) -> None:
         super().__init__(DefragResultBytes._fields, encoding, *args, **kwargs)
@@ -696,12 +695,11 @@ class DefragResultBytes(ResultBytes):
     def url(self: Self) -> bytes:
         if self._raw_fragment is None:
             return self.geturl()
-        else:
-            return self.geturl()[:-len("#" + self._raw_fragment)]
+        return self.geturl()[:-len("#" + self._raw_fragment)]
 
 
 class DefragResult(Result):
-    _fields: tuple[str] = DefragResultBytes._fields
+    _fields: tuple[str, ...] = DefragResultBytes._fields
 
     def __init__(self: Self, *args, **kwargs) -> None:
         super().__init__(DefragResult._fields, *args, **kwargs)
@@ -710,8 +708,7 @@ class DefragResult(Result):
     def url(self: Self) -> str:
         if self._raw_fragment is None:
             return self.geturl()
-        else:
-            return self.geturl()[:-len("#" + self._raw_fragment)]
+        return self.geturl()[:-len("#" + self._raw_fragment)]
 
     def encode(self: Self, encoding: str) -> DefragResultBytes:
         return DefragResultBytes(
@@ -735,7 +732,7 @@ def _extract_params(path: str) -> str | None:
 
 
 class ParseResultBytes(ResultBytes):
-    _fields: tuple[str] = ("scheme", "netloc", "path", "params", "query", "fragment")
+    _fields: tuple[str, ...] = ("scheme", "netloc", "path", "params", "query", "fragment")
 
     def __init__(self: Self, encoding: str, *args, **kwargs) -> None:
         super().__init__(
@@ -771,7 +768,7 @@ class ParseResultBytes(ResultBytes):
 
 
 class ParseResult(Result):
-    _fields: tuple[str] = ParseResultBytes._fields
+    _fields: tuple[str, ...] = ParseResultBytes._fields
 
     def __init__(self: Self, *args, **kwargs) -> None:
         super().__init__(ParseResult._fields, *args, **kwargs)
@@ -829,9 +826,7 @@ def _nurlparse(url: str | bytes, scheme: str | bytes | None = None, allow_fragme
         elif not re.fullmatch(_SCHEME, scheme):
             raise ValueError("Invalid scheme")
 
-    is_bytes: bool = False
     if isinstance(url, bytes):
-        is_bytes = True
         url = url.decode(_DEFAULT_ENCODING)
     url = re.sub(r"[\r\n\t]", "", url)
 
@@ -883,8 +878,7 @@ def urlsplit(
     return result.encode(_DEFAULT_ENCODING) if is_bytes else result
 
 
-def urlunparse(components: Iterable[str] | Iterable[bytes]) -> str | bytes:
-    components = tuple(components)
+def urlunparse(components: Sequence[str] | Sequence[bytes]) -> str | bytes:
     is_bytes: bool = isinstance(components[0], bytes)
     if not any(all(isinstance(c, t) for c in components) for t in (str, bytes)):
         raise TypeError("Cannot mix str and bytes")
@@ -906,8 +900,7 @@ def urlunparse(components: Iterable[str] | Iterable[bytes]) -> str | bytes:
     return result.encode(_DEFAULT_ENCODING) if is_bytes else result
 
 
-def urlunsplit(components: Iterable[str] | Iterable[bytes]) -> str | bytes:
-    components = tuple(components)
+def urlunsplit(components: Sequence[str] | Sequence[bytes]) -> str | bytes:
     is_bytes: bool = isinstance(components[0], bytes)
     if not any(all(isinstance(c, t) for c in components) for t in (str, bytes)):
         raise TypeError("Cannot mix str and bytes")
