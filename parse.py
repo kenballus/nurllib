@@ -152,9 +152,9 @@ _IPV6ADDRESS: str = (
     "(?:"
     + r"|".join(
         (
-            rf"(?:{_H16}:){{6}}{_LS32}",
-            rf"::(?:{_H16}:){{5}}{_LS32}",
-            rf"(?:{_H16})?::(?:{_H16}:){{4}}{_LS32}",
+                                           rf"(?:{_H16}:){{6}}{_LS32}",
+                                         rf"::(?:{_H16}:){{5}}{_LS32}",
+                              rf"(?:{_H16})?::(?:{_H16}:){{4}}{_LS32}",
             rf"(?:(?:{_H16}:){{0,1}}{_H16})?::(?:{_H16}:){{3}}{_LS32}",
             rf"(?:(?:{_H16}:){{0,2}}{_H16})?::(?:{_H16}:){{2}}{_LS32}",
             rf"(?:(?:{_H16}:){{0,3}}{_H16})?::(?:{_H16}:){{1}}{_LS32}",
@@ -527,7 +527,7 @@ def _merge_paths(base: NURL, r: NURL) -> str:
 
 
 ############################################################################################################
-# ------------- Everything below here is crud that we need for compatibility with urllib.parse -------------#
+# ------------ Everything below here is crud that we need for compatibility with urllib.parse ------------ #
 ############################################################################################################
 
 
@@ -695,7 +695,7 @@ class DefragResultBytes(ResultBytes):
     def url(self: Self) -> bytes:
         if self._raw_fragment is None:
             return self.geturl()
-        return self.geturl()[:-len("#" + self._raw_fragment)]
+        return self.geturl()[: -len("#" + self._raw_fragment)]
 
 
 class DefragResult(Result):
@@ -708,7 +708,7 @@ class DefragResult(Result):
     def url(self: Self) -> str:
         if self._raw_fragment is None:
             return self.geturl()
-        return self.geturl()[:-len("#" + self._raw_fragment)]
+        return self.geturl()[: -len("#" + self._raw_fragment)]
 
     def encode(self: Self, encoding: str) -> DefragResultBytes:
         return DefragResultBytes(
@@ -735,9 +735,7 @@ class ParseResultBytes(ResultBytes):
     _fields: tuple[str, ...] = ("scheme", "netloc", "path", "params", "query", "fragment")
 
     def __init__(self: Self, encoding: str, *args, **kwargs) -> None:
-        super().__init__(
-            ParseResultBytes._fields, encoding, *args, **kwargs
-        )
+        super().__init__(ParseResultBytes._fields, encoding, *args, **kwargs)
         self._raw_params: str | None = _extract_params(self._raw_path)
 
     @property
@@ -815,7 +813,9 @@ class ParseResult(Result):
 
 def _nurlparse(url: str | bytes, scheme: str | bytes | None = None, allow_fragments: bool = True) -> NURL:
     if scheme is not None:
-        if (isinstance(scheme, bytes) and not isinstance(url, bytes)) or (isinstance(scheme, str) and not isinstance(url, str)):
+        if (isinstance(scheme, bytes) and not isinstance(url, bytes)) or (
+            isinstance(scheme, str) and not isinstance(url, str)
+        ):
             raise TypeError("Cannot mix str and bytes")
         if isinstance(scheme, bytes):
             scheme = scheme.decode(_DEFAULT_ENCODING)
@@ -874,7 +874,9 @@ def urlsplit(
     if scheme == "":
         scheme = None
     is_bytes: bool = isinstance(url, bytes)
-    result: SplitResult = SplitResult._from_nurl(_nurlparse(url, scheme=scheme, allow_fragments=allow_fragments))
+    result: SplitResult = SplitResult._from_nurl(
+        _nurlparse(url, scheme=scheme, allow_fragments=allow_fragments)
+    )
     return result.encode(_DEFAULT_ENCODING) if is_bytes else result
 
 
@@ -921,7 +923,9 @@ def urlunsplit(components: Sequence[str] | Sequence[bytes]) -> str | bytes:
 
 
 def urljoin(base: str | bytes, url: str | bytes, allow_fragments: bool = True) -> str | bytes:
-    if (isinstance(base, bytes) and not isinstance(url, bytes)) or (isinstance(base, str) and not isinstance(url, str)):
+    if (isinstance(base, bytes) and not isinstance(url, bytes)) or (
+        isinstance(base, str) and not isinstance(url, str)
+    ):
         raise TypeError("Cannot mix str and bytes")
     result: str = (
         _nurlparse(base, allow_fragments=allow_fragments)
@@ -929,6 +933,7 @@ def urljoin(base: str | bytes, url: str | bytes, allow_fragments: bool = True) -
         .serialize()
     )
     return result.encode(_DEFAULT_ENCODING) if isinstance(base, bytes) else result
+
 
 def urldefrag(url: str | bytes) -> DefragResult | DefragResultBytes:
     is_bytes: bool = isinstance(url, bytes)
