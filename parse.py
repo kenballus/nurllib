@@ -19,7 +19,7 @@ import re
 from typing import Iterator, Iterable, Self, Callable, Any, Sequence
 
 # I have no problem with any of these, so I'm fine copying them from urllib.parse:
-from urllib.parse import urlencode, non_hierarchical, scheme_chars, parse_qs, parse_qsl, quote, quote_from_bytes, quote_plus, unquote_to_bytes, uses_fragment, uses_netloc, uses_params, uses_query, uses_relative
+from urllib.parse import urlencode, non_hierarchical, scheme_chars, parse_qs, parse_qsl, quote, quote_from_bytes, quote_plus, unquote_to_bytes, uses_fragment, uses_netloc, uses_params, uses_query, uses_relative # pylint: disable=unused-import
 
 # Each of these ABNF rules is from RFC 3986, 3987, 6874, or 5234.
 
@@ -305,18 +305,6 @@ class NURL:
         if self.raw_port is not None:
             result += f":{self.raw_port}"
         return result
-
-    @classmethod
-    def _from_nurl(cls, nurl) -> Self:
-        return cls(
-            raw_scheme=nurl.raw_scheme,
-            raw_userinfo=nurl.raw_userinfo,
-            raw_host=nurl.raw_host,
-            raw_port=nurl.raw_port,
-            raw_path=nurl.raw_path,
-            raw_query=nurl.raw_query,
-            raw_fragment=nurl.raw_fragment,
-        )
 
     def join(self: Self, r: Self, strict: bool = True) -> Self:
         """Implementation of the "Transform References" algorithm from RFC 3986 section 5.2.2"""
@@ -869,8 +857,15 @@ def urlparse(
     if scheme == "":
         scheme = None
     is_bytes: bool = isinstance(url, bytes)
-    result: ParseResult = ParseResult._from_nurl(
-        _nurlparse(url, scheme=scheme, allow_fragments=allow_fragments)
+    nurl: NURL = _nurlparse(url, scheme=scheme, allow_fragments=allow_fragments)
+    result: ParseResult = ParseResult(
+        raw_scheme=nurl.raw_scheme,
+        raw_userinfo=nurl.raw_userinfo,
+        raw_host=nurl.raw_host,
+        raw_port=nurl.raw_port,
+        raw_path=nurl.raw_path,
+        raw_query=nurl.raw_query,
+        raw_fragment=nurl.raw_fragment,
     )
     return result.encode(_DEFAULT_ENCODING) if is_bytes else result
 
@@ -881,8 +876,15 @@ def urlsplit(
     if scheme == "":
         scheme = None
     is_bytes: bool = isinstance(url, bytes)
-    result: SplitResult = SplitResult._from_nurl(
-        _nurlparse(url, scheme=scheme, allow_fragments=allow_fragments)
+    nurl: NURL = _nurlparse(url, scheme=scheme, allow_fragments=allow_fragments)
+    result: SplitResult = SplitResult(
+        raw_scheme=nurl.raw_scheme,
+        raw_userinfo=nurl.raw_userinfo,
+        raw_host=nurl.raw_host,
+        raw_port=nurl.raw_port,
+        raw_path=nurl.raw_path,
+        raw_query=nurl.raw_query,
+        raw_fragment=nurl.raw_fragment,
     )
     return result.encode(_DEFAULT_ENCODING) if is_bytes else result
 
@@ -944,5 +946,14 @@ def urljoin(base: str | bytes, url: str | bytes, allow_fragments: bool = True) -
 
 def urldefrag(url: str | bytes) -> DefragResult | DefragResultBytes:
     is_bytes: bool = isinstance(url, bytes)
-    result: DefragResult = DefragResult._from_nurl(_nurlparse(url))
+    nurl: NURL = _nurlparse(url)
+    result: DefragResult = DefragResult(
+        raw_scheme=nurl.raw_scheme,
+        raw_userinfo=nurl.raw_userinfo,
+        raw_host=nurl.raw_host,
+        raw_port=nurl.raw_port,
+        raw_path=nurl.raw_path,
+        raw_query=nurl.raw_query,
+        raw_fragment=nurl.raw_fragment,
+    )
     return result.encode(_DEFAULT_ENCODING) if is_bytes else result
