@@ -1,15 +1,6 @@
 """nurllib.parse
-urllib.parse is unmaintainable, so this is a clean-slate rewrite of urllib.parse
-I am shooting for compatibility with RFCs 3986 and 3987
-
-This library differs from urllib.parse in the following ways:
-    - It removes all deprecated components
-    - It no longer applies NFKC normalization before parsing IRIs.
-    - It introduces new APIs that allow you to specify exactly what you want to parse.
-    - It removes the capability to construct *Results manually.
-    - urlsplit no longer strips garbage bytes from the beginning and end of the URL.
-    - Hosts are now lowercased.
-    - Paths are normalized when joined.
+A clean-slate rewrite of urllib.parse
+Shooting for compatibility with RFCs 3986 and 3987
 """
 
 import copy
@@ -805,7 +796,6 @@ class ParseResult(Result):
             self.raw_query,
             self.raw_fragment,
         )
-
 
 def _nurlparse(url: str | bytes, scheme: str | bytes | None = None, allow_fragments: bool = True) -> NURL:
     if scheme is not None:
