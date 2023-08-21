@@ -10,7 +10,22 @@ import re
 from typing import Iterator, Iterable, Self, Callable, Any, Sequence
 
 # I have no problem with any of these, so I'm fine copying them from urllib.parse:
-from urllib.parse import urlencode, non_hierarchical, scheme_chars, parse_qs, parse_qsl, quote, quote_from_bytes, quote_plus, unquote_to_bytes, uses_fragment, uses_netloc, uses_params, uses_query, uses_relative # pylint: disable=unused-import
+from urllib.parse import (
+    urlencode,
+    non_hierarchical,
+    scheme_chars,
+    parse_qs,
+    parse_qsl,
+    quote,
+    quote_from_bytes,
+    quote_plus,
+    unquote_to_bytes,
+    uses_fragment,
+    uses_netloc,
+    uses_params,
+    uses_query,
+    uses_relative,
+)  # pylint: disable=unused-import
 
 # Each of these ABNF rules is from RFC 3986, 3987, 6874, or 5234.
 
@@ -796,6 +811,7 @@ class ParseResult(Result):
             self.raw_query,
             self.raw_fragment,
         )
+
 
 def _nurlparse(url: str | bytes, scheme: str | bytes | None = None, allow_fragments: bool = True) -> NURL:
     if scheme is not None:
