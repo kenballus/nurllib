@@ -13,6 +13,7 @@ This is a rewrite of large portions of urllib.parse.
 - `urlsplit` no longer strips garbage bytes from the beginning and end of its input.
 - The Result types are no longer able to be constructed explicitly.
 - URLs are now joined according to the procedure from RFC 3986. This involves more path normalization than urllib.parse uses.
+- Leading 0s are now stripped from port numbers.
 
 ## What's exactly the same:
 - `urlencode`
