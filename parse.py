@@ -241,81 +241,81 @@ _IRELATIVE_REF_PAT: re.Pattern[str] = re.compile(_IRELATIVE_REF)
 class NURL:
     """A class to hold an IRI-Reference. You should not instantiate this directly. Instead use one of the parse_* functions."""
 
-    _raw_scheme: str | None
-    _raw_userinfo: str | None
-    _raw_host: str | None
-    _raw_port: str | None
-    _raw_path: str
-    _raw_query: str | None
-    _raw_fragment: str | None
+    raw_scheme: str | None
+    raw_userinfo: str | None
+    raw_host: str | None
+    raw_port: str | None
+    raw_path: str
+    raw_query: str | None
+    raw_fragment: str | None
 
     @property
     def scheme(self: Self):  # Not typed for back-compat
-        return self._raw_scheme
+        return self.raw_scheme
 
     @property
     def userinfo(self: Self) -> str | None:
-        return self._raw_userinfo
+        return self.raw_userinfo
 
     @property
     def host(self: Self) -> str | None:
-        return self._raw_host
+        return self.raw_host
 
     @property
     def port(self: Self) -> int | None:
-        if self._raw_port is not None and len(self._raw_port) > 0:
-            return int(self._raw_port, base=10)
+        if self.raw_port is not None and len(self.raw_port) > 0:
+            return int(self.raw_port, base=10)
         return None
 
     @property
     def path(self: Self):  # Not typed for back-compat
-        return self._raw_path
+        return self.raw_path
 
     @property
     def query(self: Self):  # Not typed for back-compat
-        return self._raw_query
+        return self.raw_query
 
     @property
     def fragment(self: Self):  # Not typed for back-compat
-        return self._raw_fragment
+        return self.raw_fragment
 
     def serialize(self: Self) -> str:
         """Direct translation of RFC 3986 section 5.3"""
         result: str = ""
-        if self._raw_scheme is not None:
-            result += f"{self._raw_scheme}:"
+        if self.raw_scheme is not None:
+            result += f"{self.raw_scheme}:"
         if self.authority is not None:
             result += f"//{self.authority}"
-        result += self._raw_path
-        if self._raw_query is not None:
-            result += f"?{self._raw_query}"
-        if self._raw_fragment is not None:
-            result += f"#{self._raw_fragment}"
+        result += self.raw_path
+        if self.raw_query is not None:
+            result += f"?{self.raw_query}"
+        if self.raw_fragment is not None:
+            result += f"#{self.raw_fragment}"
         return result
 
     @property
     def authority(self: Self) -> str | None:
         """userinfo@host:port"""
-        if self._raw_host is None:
+        if self.raw_host is None:
             return None
         result: str = ""
-        if self._raw_userinfo is not None:
-            result += f"{self._raw_userinfo}@"
-        result += self._raw_host
-        if self._raw_port is not None:
-            result += f":{self._raw_port}"
+        if self.raw_userinfo is not None:
+            result += f"{self.raw_userinfo}@"
+        result += self.raw_host
+        if self.raw_port is not None:
+            result += f":{self.raw_port}"
         return result
 
     @classmethod
     def _from_nurl(cls, nurl) -> Self:
         return cls(
-            _raw_scheme=nurl._raw_scheme,
-            _raw_userinfo=nurl._raw_userinfo,
-            _raw_host=nurl._raw_host,
-            _raw_port=nurl._raw_port,
-            _raw_path=nurl._raw_path,
-            _raw_query=nurl._raw_query,
-            _raw_fragment=nurl._raw_fragment,
+            raw_scheme=nurl.raw_scheme,
+            raw_userinfo=nurl.raw_userinfo,
+            raw_host=nurl.raw_host,
+            raw_port=nurl.raw_port,
+            raw_path=nurl.raw_path,
+            raw_query=nurl.raw_query,
+            raw_fragment=nurl.raw_fragment,
         )
 
     def join(self: Self, r: Self, strict: bool = True) -> Self:
@@ -332,51 +332,51 @@ class NURL:
         # This is a direct translation of the pseudocode in the RFC.
         # It could be made prettier, but I'm leaving it like this because
         # it's easy to check against the RFC.
-        r_scheme: str | None = r._raw_scheme
-        if not strict and r._raw_scheme == self._raw_scheme:
+        r_scheme: str | None = r.raw_scheme
+        if not strict and r.raw_scheme == self.raw_scheme:
             r_scheme = None
         if r_scheme is not None:
             scheme = r_scheme
-            userinfo = r._raw_userinfo
-            host = r._raw_host
-            port = r._raw_port
-            path = _remove_dot_segments(r._raw_path)
-            query = r._raw_query
+            userinfo = r.raw_userinfo
+            host = r.raw_host
+            port = r.raw_port
+            path = _remove_dot_segments(r.raw_path)
+            query = r.raw_query
         else:
             if r.authority is not None:
-                userinfo = r._raw_userinfo
-                host = r._raw_host
-                port = r._raw_port
-                path = _remove_dot_segments(r._raw_path)
-                query = r._raw_query
+                userinfo = r.raw_userinfo
+                host = r.raw_host
+                port = r.raw_port
+                path = _remove_dot_segments(r.raw_path)
+                query = r.raw_query
             else:
-                if len(r._raw_path) == 0:
-                    path = self._raw_path
-                    if r._raw_query is not None:
-                        query = r._raw_query
+                if len(r.raw_path) == 0:
+                    path = self.raw_path
+                    if r.raw_query is not None:
+                        query = r.raw_query
                     else:
-                        query = self._raw_query
+                        query = self.raw_query
                 else:
-                    if r._raw_path.startswith("/"):
-                        path = _remove_dot_segments(r._raw_path)
+                    if r.raw_path.startswith("/"):
+                        path = _remove_dot_segments(r.raw_path)
                     else:
                         path = _merge_paths(self, r)
                         path = _remove_dot_segments(path)
-                    query = r._raw_query
-                userinfo = self._raw_userinfo
-                host = self._raw_host
-                port = self._raw_port
-            scheme = self._raw_scheme
-        fragment = r._raw_fragment
+                    query = r.raw_query
+                userinfo = self.raw_userinfo
+                host = self.raw_host
+                port = self.raw_port
+            scheme = self.raw_scheme
+        fragment = r.raw_fragment
 
         return self.__class__(
-            _raw_scheme=scheme,
-            _raw_userinfo=userinfo,
-            _raw_host=host,
-            _raw_port=port,
-            _raw_path=path,
-            _raw_query=query,
-            _raw_fragment=fragment,
+            raw_scheme=scheme,
+            raw_userinfo=userinfo,
+            raw_host=host,
+            raw_port=port,
+            raw_path=path,
+            raw_query=query,
+            raw_fragment=fragment,
         )
 
 
@@ -426,13 +426,13 @@ def _parse(data: str, pattern: re.Pattern[str] | str, path_kinds: Iterable[str])
         fragment = _capitalize_percent_encodings(fragment)
 
     return NURL(
-        _raw_scheme=scheme,
-        _raw_userinfo=userinfo,
-        _raw_host=host,
-        _raw_port=port,
-        _raw_path=_capitalize_percent_encodings(m[next(pk for pk in path_kinds if m[pk] is not None)]),
-        _raw_query=query,
-        _raw_fragment=fragment,
+        raw_scheme=scheme,
+        raw_userinfo=userinfo,
+        raw_host=host,
+        raw_port=port,
+        raw_path=_capitalize_percent_encodings(m[next(pk for pk in path_kinds if m[pk] is not None)]),
+        raw_query=query,
+        raw_fragment=fragment,
     )
 
 
@@ -525,10 +525,10 @@ def _remove_dot_segments(path: str) -> str:
 
 def _merge_paths(base: NURL, r: NURL) -> str:
     """Implementation of the "merge" routine defined in RFC 3986 section 5.2.3"""
-    if base._raw_host is not None and len(base._raw_path) == 0:
-        return f"/{r._raw_path}"
-    dirname, slash, _ = base._raw_path.rpartition("/")
-    return dirname + slash + r._raw_path
+    if base.raw_host is not None and len(base.raw_path) == 0:
+        return f"/{r.raw_path}"
+    dirname, slash, _ = base.raw_path.rpartition("/")
+    return dirname + slash + r.raw_path
 
 
 ############################################################################################################
@@ -541,19 +541,19 @@ _DEFAULT_ENCODING: str = "ascii"
 
 def _squish_fragment(ref: NURL) -> NURL:
     result: NURL = copy.copy(ref)
-    if result._raw_fragment is None:
+    if result.raw_fragment is None:
         return result
-    if result._raw_query is not None:
-        result._raw_query += f"#{result._raw_fragment}"
+    if result.raw_query is not None:
+        result.raw_query += f"#{result.raw_fragment}"
     else:
-        result._raw_path += f"#{result._raw_fragment}"
-    result._raw_fragment = None
+        result.raw_path += f"#{result.raw_fragment}"
+    result.raw_fragment = None
     return result
 
 
 def _remove_fragment(ref: NURL) -> NURL:
     result: NURL = copy.copy(ref)
-    result._raw_fragment = None
+    result.raw_fragment = None
     return result
 
 
@@ -602,11 +602,11 @@ class Result(NURL):
 
     @property
     def query(self: Self):
-        return self._raw_query if self._raw_query is not None else ""
+        return self.raw_query if self.raw_query is not None else ""
 
     @property
     def fragment(self: Self):
-        return self._raw_fragment if self._raw_fragment is not None else ""
+        return self.raw_fragment if self.raw_fragment is not None else ""
 
     @property
     def netloc(self: Self):
@@ -614,7 +614,7 @@ class Result(NURL):
 
     @property
     def scheme(self: Self):
-        return self._raw_scheme if self._raw_scheme is not None else ""
+        return self.raw_scheme if self.raw_scheme is not None else ""
 
     def geturl(self: Self):
         return self.serialize()
@@ -683,13 +683,13 @@ class SplitResult(Result):
     def encode(self: Self, encoding: str) -> SplitResultBytes:
         return SplitResultBytes(
             encoding,
-            self._raw_scheme,
-            self._raw_userinfo,
-            self._raw_host,
-            self._raw_port,
-            self._raw_path,
-            self._raw_query,
-            self._raw_fragment,
+            self.raw_scheme,
+            self.raw_userinfo,
+            self.raw_host,
+            self.raw_port,
+            self.raw_path,
+            self.raw_query,
+            self.raw_fragment,
         )
 
 
@@ -701,9 +701,9 @@ class DefragResultBytes(ResultBytes):
 
     @property
     def url(self: Self) -> bytes:
-        if self._raw_fragment is None:
+        if self.raw_fragment is None:
             return self.geturl()
-        return self.geturl()[: -len(f"#{self._raw_fragment}")]
+        return self.geturl()[: -len(f"#{self.raw_fragment}")]
 
 
 class DefragResult(Result):
@@ -714,20 +714,20 @@ class DefragResult(Result):
 
     @property
     def url(self: Self) -> str:
-        if self._raw_fragment is None:
+        if self.raw_fragment is None:
             return self.geturl()
-        return self.geturl()[: -len(f"#{self._raw_fragment}")]
+        return self.geturl()[: -len(f"#{self.raw_fragment}")]
 
     def encode(self: Self, encoding: str) -> DefragResultBytes:
         return DefragResultBytes(
             encoding,
-            self._raw_scheme,
-            self._raw_userinfo,
-            self._raw_host,
-            self._raw_port,
-            self._raw_path,
-            self._raw_query,
-            self._raw_fragment,
+            self.raw_scheme,
+            self.raw_userinfo,
+            self.raw_host,
+            self.raw_port,
+            self.raw_path,
+            self.raw_query,
+            self.raw_fragment,
         )
 
 
@@ -744,32 +744,32 @@ class ParseResultBytes(ResultBytes):
 
     def __init__(self: Self, encoding: str, *args, **kwargs) -> None:
         super().__init__(ParseResultBytes._fields, encoding, *args, **kwargs)
-        self._raw_params: str | None = _extract_params(self._raw_path)
+        self.raw_params: str | None = _extract_params(self.raw_path)
 
     @property
     def params(self: Self) -> bytes:
-        return self._raw_params.encode(self._encoding) if self._raw_params is not None else b""
+        return self.raw_params.encode(self._encoding) if self.raw_params is not None else b""
 
     @property
     def path(self: Self) -> bytes:
         return (
-            self._raw_path[: -len(f";{self._raw_params}")] if self._raw_params is not None else self._raw_path
+            self.raw_path[: -len(f";{self.raw_params}")] if self.raw_params is not None else self.raw_path
         ).encode(self._encoding)
 
     def geturl(self: Self) -> bytes:
         """Translation of RFC 3986 section 5.3 with added params support"""
         result: str = ""
-        if self._raw_scheme is not None:
-            result += f"{self._raw_scheme}:"
+        if self.raw_scheme is not None:
+            result += f"{self.raw_scheme}:"
         if self.authority is not None:
             result += f"//{self.authority}"
         result += self.path.decode(self._encoding)
-        if self._raw_params is not None:
-            result += f";{self._raw_params}"
-        if self._raw_query is not None:
-            result += f"?{self._raw_query}"
-        if self._raw_fragment is not None:
-            result += f"#{self._raw_fragment}"
+        if self.raw_params is not None:
+            result += f";{self.raw_params}"
+        if self.raw_query is not None:
+            result += f"?{self.raw_query}"
+        if self.raw_fragment is not None:
+            result += f"#{self.raw_fragment}"
         return result.encode(self._encoding)
 
 
@@ -778,44 +778,44 @@ class ParseResult(Result):
 
     def __init__(self: Self, *args, **kwargs) -> None:
         super().__init__(ParseResult._fields, *args, **kwargs)
-        self._raw_params: str | None = _extract_params(self._raw_path)
+        self.raw_params: str | None = _extract_params(self.raw_path)
 
     @property
     def params(self: Self) -> str:
-        return self._raw_params if self._raw_params is not None else ""
+        return self.raw_params if self.raw_params is not None else ""
 
     @property
     def path(self: Self) -> str:
-        if self._raw_params is not None:
-            return self._raw_path[: -len(f";{self._raw_params}")]
-        return self._raw_path
+        if self.raw_params is not None:
+            return self.raw_path[: -len(f";{self.raw_params}")]
+        return self.raw_path
 
     def geturl(self: Any) -> str:
         """Translation of RFC 3986 section 5.3 with added params support"""
         result: str = ""
-        if self._raw_scheme is not None:
-            result += f"{self._raw_scheme}:"
+        if self.raw_scheme is not None:
+            result += f"{self.raw_scheme}:"
         if self.authority is not None:
             result += f"//{self.authority}"
         result += self.path
-        if self._raw_params is not None:
-            result += f";{self._raw_params}"
-        if self._raw_query is not None:
-            result += f"?{self._raw_query}"
-        if self._raw_fragment is not None:
-            result += f"#{self._raw_fragment}"
+        if self.raw_params is not None:
+            result += f";{self.raw_params}"
+        if self.raw_query is not None:
+            result += f"?{self.raw_query}"
+        if self.raw_fragment is not None:
+            result += f"#{self.raw_fragment}"
         return result
 
     def encode(self: Self, encoding: str) -> ParseResultBytes:
         return ParseResultBytes(
             encoding,
-            self._raw_scheme,
-            self._raw_userinfo,
-            self._raw_host,
-            self._raw_port,
-            self._raw_path,
-            self._raw_query,
-            self._raw_fragment,
+            self.raw_scheme,
+            self.raw_userinfo,
+            self.raw_host,
+            self.raw_port,
+            self.raw_path,
+            self.raw_query,
+            self.raw_fragment,
         )
 
 
@@ -853,7 +853,7 @@ def _nurlparse(url: str | bytes, scheme: str | bytes | None = None, allow_fragme
     try:
         result = ref_parser(url)
         if scheme is not None:
-            result._raw_scheme = scheme
+            result.raw_scheme = scheme
         if not allow_fragments:
             result = _squish_fragment(result)
         return result
