@@ -33,3 +33,7 @@ This is a rewrite of large portions of urllib.parse.
 
 ## What's functionally the same:
 Everything else, hopefully
+
+## Running the tests
+Run `./get_tests.sh`, then run `python3 test_urlparse.py`.
+A few tests fail, but these are due to the documented changes above.
