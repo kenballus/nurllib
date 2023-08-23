@@ -12,7 +12,7 @@ This is a rewrite of large portions of urllib.parse.
 - Percent-encoded bytes are normalized to uppercase.
 - `urlsplit` no longer strips garbage bytes from the beginning and end of its input.
 - The `Result` types can no longer be constructed explicitly.
-- URLs are now joined according to the procedure from RFC 3986. This mean more path normalization and less fragment normalization than `urllib.parse.urljoin`.
+- URLs are now joined according to the procedure from RFC 3986. This means more path normalization and less fragment normalization than `urllib.parse.urljoin`.
 - Leading 0s are now stripped from port numbers.
 
 ## What's exactly the same:
