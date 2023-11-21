@@ -1,7 +1,7 @@
 # Delete anything lying around
 rm -f test_urlparse.py
 # Grab a fresh copy of the tests
-wget https://raw.githubusercontent.com/python/cpython/13104f3b7412dce9bf7cfd09bf2d6dad1f3cc2ed/Lib/test/test_urlparse.py
+wget 'https://raw.githubusercontent.com/python/cpython/13104f3b7412dce9bf7cfd09bf2d6dad1f3cc2ed/Lib/test/test_urlparse.py'
 # Rename the module
 sed -i 's/import urllib\.parse/import parse as parse_module/g' test_urlparse.py
 sed -i 's/urllib\.parse/parse_module/g' test_urlparse.py
@@ -20,8 +20,6 @@ printf ', UrlParseTestCase.test_port_casting_failure_message' >> test_urlparse.p
 printf ', UrlParseTestCase.test_attributes_bad_scheme' >> test_urlparse.py
 # Because __all__ is changing.
 printf ', UrlParseTestCase.test_all' >> test_urlparse.py
-# Because we don't have _encoded_counterpart and _decoded_counterpart anymore.
-sed -i 's/def _check_result_type(self, str_type):/def _check_result_type(self, str_type):\n        return/g' test_urlparse.py
 # Because we use the RFC 6874 syntax for scoped IPv6.
 printf ', UrlParseTestCase.test_urlsplit_scoped_IPv6' >> test_urlparse.py
 # Because urlsplit no longer strips junk from the end of URLs.

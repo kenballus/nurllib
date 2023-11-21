@@ -7,7 +7,7 @@ This is a rewrite of large portions of urllib.parse.
 - Performance is worse. (~2x worse with caching, ~5x worse without caching)
 - All deprecated and undocumented components are removed.
 - There are new functions that allow you to parse only URIs, IRIs, relative-refs, or irelative-refs.
-- NFKC normalization is no longer applied before parsing. The standard recommends that it is the IRI producer's responsibility to do this, not ours.
+- NFKC normalization is no longer applied before parsing. The standard recommends that this be the IRI producer's responsibility to do this, not ours.
 - Hosts and schemes are normalized to lowercase.
 - Percent-encoded bytes are normalized to uppercase.
 - `urlsplit` no longer strips garbage bytes from the beginning and end of its input.
